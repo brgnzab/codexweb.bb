@@ -10,10 +10,29 @@ function redactText(value) {
   const redacted = value
     .replace(/tunnel_[a-f0-9]{32}/g, "[tunnel-id]")
     .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, "[runtime-key]")
-    .replace(/\bBearer\s+[A-Za-z0-9._~-]{20,}\b/gi, "Bearer [redacted]");
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[github-token]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{20,}\b/gi, "Bearer [redacted]")
+    .replace(/\b(Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi, "$1: [redacted]")
+    .replace(/\b(access_token|refresh_token|api[_-]?key|token|password|secret)=([^&\s]+)/gi, "$1=[redacted]")
+    .replace(/\bhttps?:\/\/[^/\s:@]+:[^@\s/]+@/gi, "https://[credentials-redacted]@");
   return redacted.length > MAX_LOG_STRING_CHARS
     ? `${redacted.slice(0, MAX_LOG_STRING_CHARS)}…[truncated]`
     : redacted;
+}
+
+function sensitiveKey(key) {
+  const normalized = String(key).replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  return normalized === "authorization"
+    || normalized === "cookie"
+    || normalized === "setcookie"
+    || normalized === "apikey"
+    || normalized === "runtimekey"
+    || normalized === "controlkey"
+    || normalized === "privatekey"
+    || normalized.endsWith("token")
+    || normalized.endsWith("password")
+    || normalized.endsWith("secret")
+    || normalized.endsWith("credential");
 }
 
 function sanitize(value, seen = new WeakSet()) {
@@ -25,9 +44,7 @@ function sanitize(value, seen = new WeakSet()) {
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
       key,
-      /(?:authorization|cookie|runtimeKey|controlToken)/i.test(key)
-        ? "[redacted]"
-        : sanitize(item, seen),
+      sensitiveKey(key) ? "[redacted]" : sanitize(item, seen),
     ]),
   );
 }
@@ -104,10 +121,11 @@ function installProcessDiagnosticGuards({ filePath, streams = [process.stdout, p
     guarded.add(stream);
     stream.on("error", (error) => {
       try {
+        const diagnostic = error instanceof Error ? error.stack || error.message : String(error);
         fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
         fs.appendFileSync(
           filePath,
-          `${new Date().toISOString()} ${error instanceof Error ? error.stack || error.message : String(error)}\n`,
+          `${new Date().toISOString()} ${redactText(diagnostic)}\n`,
           { mode: 0o600 },
         );
       } catch {
@@ -138,4 +156,5 @@ module.exports = {
   redactText,
   registerLoggedIpc,
   sanitize,
+  sensitiveKey,
 };

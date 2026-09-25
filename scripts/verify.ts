@@ -18,6 +18,7 @@ async function run(args: string[]): Promise<void> {
 }
 
 try {
+  await run(["run", "scripts/check-public-hygiene.ts"]);
   await run(["run", "check-version"]);
   await run(["run", "audit"]);
   await run(["run", "typecheck"]);
@@ -26,6 +27,7 @@ try {
   await run(["run", "launcher:test"]);
   await run(["run", "launcher:build"]);
   await run(["run", "scripts/build-runtime-bundle.ts", runtimeBundle]);
+  await run(["run", "scripts/check-public-hygiene.ts", runtimeBundle]);
   await run([
     "run",
     "scripts/generate-third-party-notices.ts",

@@ -30,3 +30,18 @@ if (notices.error) throw notices.error;
 if (notices.status !== 0) process.exit(notices.status ?? 1);
 fs.copyFileSync(path.join(repositoryRoot, "LICENSE"), path.join(output, "LICENSE"));
 fs.cpSync(path.join(repositoryRoot, "LICENSES"), path.join(output, "LICENSES"), { recursive: true });
+
+const hygienePaths = [
+  path.join(launcherRoot, "electron"),
+  output,
+  path.join(launcherRoot, "package.json"),
+];
+const rendererOutput = path.join(launcherRoot, "dist");
+if (fs.existsSync(rendererOutput)) hygienePaths.push(rendererOutput);
+const hygiene = spawnSync(bun, ["run", "scripts/check-public-hygiene.ts", ...hygienePaths], {
+  cwd: repositoryRoot,
+  env: process.env,
+  stdio: "inherit",
+});
+if (hygiene.error) throw hygiene.error;
+if (hygiene.status !== 0) process.exit(hygiene.status ?? 1);

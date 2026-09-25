@@ -4,16 +4,52 @@ dist/
 coverage/
 .DS_Store
 .env
+.env.*
+!.env.example
 .playwright-cli/
 output/
 *.log
+*.jsonl
 *.pid
 *.sock
 *.key
+*.pem
+*.p12
+*.pfx
 storage-state.json
+storage-state*.json
 runtime/
 references/
 .launcher-runtime/
 launcher/build/
 launcher/release/
 launcher/artifacts/
+
+# CWC Personal private runtime/session state. These paths are never source inputs.
+.cwc-data/
+.codex-chatgpt-web/
+/config.json
+/browser/
+/council/
+/logs/
+/launcher-state.json
+/window-state.json
+/owner-control.json
+/managed-agents.json
+/managed-project.json
+/supervisor.json
+/memory-index.json
+/Cookies
+/Cookies-journal
+/Login Data
+/Login Data For Account
+/Local State
+/Preferences
+/Secure Preferences
+/WebStorage/
+/Local Storage/
+/Session Storage/
+/Network/
+/Cache/
+/Code Cache/
+/GPUCache/
