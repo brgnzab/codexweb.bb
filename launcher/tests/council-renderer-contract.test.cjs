@@ -8,19 +8,17 @@ const main = readFileSync(join(root, "src", "main.tsx"), "utf8");
 const dock = readFileSync(join(root, "src", "CouncilDock.tsx"), "utf8");
 const setup = readFileSync(join(root, "src", "CouncilSetupPanel.tsx"), "utf8");
 const agents = readFileSync(join(root, "src", "CouncilAgentsPanel.tsx"), "utf8");
-const updates = readFileSync(join(root, "src", "CouncilUpdatePrompt.tsx"), "utf8");
 const types = readFileSync(join(root, "src", "types.ts"), "utf8");
 const preload = readFileSync(join(root, "electron", "preload.cjs"), "utf8");
 const css = readFileSync(join(root, "src", "council.css"), "utf8");
-const indexHtml = readFileSync(join(root, "index.html"), "utf8");
 
-test("Mission Control preserves the existing App without mounting legacy Council overlays", () => {
+test("Mission Control mounts only the current Council App shell", () => {
   assert.match(main, /import \{ App \} from "\.\/App"/);
   assert.match(main, /<App\s*\/>/);
+  assert.doesNotMatch(main, /CouncilUpdatePrompt|council-update\.css/);
   assert.doesNotMatch(main, /<CouncilDock\s*\/>/);
   assert.doesNotMatch(main, /<CouncilAgentsPanel\s*\/>/);
   assert.doesNotMatch(main, /<CouncilSetupPanel\s*\/>/);
-  assert.match(main, /<CouncilUpdatePrompt\s*\/>/);
   assert.match(main, /import "\.\/styles\.css"/);
   assert.match(main, /import "\.\/council-4-shell-foundation\.css"/);
   assert.match(main, /import "\.\/council-4-workspaces\.css"/);
@@ -65,14 +63,6 @@ test("managed agents can select only the controller-provided agent tab", () => {
   assert.match(agents, /selectBrowserTab\(tab\.id\)/);
   assert.doesNotMatch(agents, /conversationUrl/);
   assert.doesNotMatch(agents, /checkpoint\b/);
-});
-
-test("update notification requires explicit user choice", () => {
-  assert.match(updates, /Update now/);
-  assert.match(updates, /Later/);
-  assert.match(updates, /Skip this version/);
-  assert.match(updates, /api\.installUpdate/);
-  assert.doesNotMatch(updates, /installUpdate\(\).*useEffect/);
 });
 
 test("Council overlay hides and restores the external ChatGPT browser surface", () => {
