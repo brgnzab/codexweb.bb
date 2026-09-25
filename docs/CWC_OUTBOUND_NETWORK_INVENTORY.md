@@ -2,52 +2,51 @@
 
 Baseline: upstream `Nolane-x/codexweb` v4.1.0 at `440bdfda86a9dda2e909b9f2e527433c0652fff7`.
 
-CWC Personal source reviewed through `cwc-personal` commit `a0cd1592cf729c5afef8ac1c7122f009f85a9d4b`.
+CWC Personal source inventory was created at `b3b9f5401b1bd889a793d09e71a4968b93212f0d` and corrected from independent Codex runtime evidence at the same tested revision.
 
-Purpose: map known network clients and endpoints before hardening/removal. CWC-005 is an inventory gate, not the final network-restriction gate. Runtime observation by independent Codex QA is required because Electron/Chromium and the prebuilt OpenAI tunnel client can make connections whose concrete remote hosts are not all visible as JavaScript URL literals.
+Purpose: map known network clients and endpoints before hardening/removal. CWC-005 is an **inventory gate**, not the final network-restriction gate. Its tracker acceptance criterion explicitly allows known traffic to be classified as core OpenAI/ChatGPT, localhost/local IPC, removable, or unexplained. Unexplained observations must be recorded rather than guessed; later hardening/final network gates own their removal or conclusive attribution.
 
 ## Classification
 
 - **CORE OPENAI / CHATGPT** — required product traffic to ChatGPT/OpenAI services.
-- **LOCALHOST / LOCAL IPC** — loopback HTTP/CDP/control or local pipe/socket traffic; not Internet egress.
-- **CONDITIONAL INTERACTIVE AUTH** — third-party identity provider traffic only when the user chooses/signs in through that provider; not an app-owned background API client.
-- **USER-INITIATED NAVIGATION** — external browser link opened explicitly by the user; not automatic runtime egress.
-- **REMOVABLE APP TRAFFIC** — active or inherited app-owned Internet traffic not allowed in final CWC Personal.
-- **BUILD / SUPPLY-CHAIN ONLY** — dependency/build/release tooling network, outside normal installed runtime; handled by supply-chain/release gates.
-- **OPAQUE CORE CLIENT** — a required executable whose outbound service hosts are not encoded in repository JavaScript and therefore must be observed at runtime.
-- **UNEXPLAINED** — observed/source traffic with no justified product role. No unexplained source-owned client was identified in this source pass; Codex runtime QA must fail the gate if it observes one.
+- **LOCALHOST / LOCAL IPC** — loopback HTTP/CDP/control/dev-server or local pipe/socket/stdio traffic; not Internet egress.
+- **CONDITIONAL INTERACTIVE AUTH** — identity-provider traffic used by the ChatGPT authentication surface, including provider resources that can load before a provider is explicitly selected.
+- **USER-INITIATED NAVIGATION** — external browser links opened explicitly by the user; not automatic runtime egress.
+- **REMOVABLE APP TRAFFIC** — active/inherited app-owned Internet traffic that conflicts with final CWC Personal requirements.
+- **BUILD / SUPPLY-CHAIN ONLY** — dependency/build/release tooling traffic outside normal installed runtime.
+- **OPAQUE CORE CLIENT** — required executable whose concrete service hosts are not encoded in repository JavaScript and therefore require runtime process observation.
+- **UNEXPLAINED** — observed product-owned traffic whose hostname/purpose cannot yet be established reliably. CWC-005 may inventory such traffic; it must be resolved, eliminated, or explicitly allowed by the later hardening/final network gate.
 
 ## 1. Core ChatGPT / OpenAI traffic
 
-| Client / code path | Endpoint / host | Trigger | Classification | CWC Personal action |
+| Client / code path | Endpoint / host | Trigger | Classification | Disposition |
 | --- | --- | --- | --- | --- |
-| Electron browser host / Playwright browser surfaces (`launcher/electron/browser-host.cjs`, `src/chatgpt-session.ts`, browser adapter) | `https://chatgpt.com` | ChatGPT sign-in/session, Temporary Chat, managed Council conversations, model/turn automation | CORE OPENAI / CHATGPT | Preserve |
-| Electron webRequest filter | `https://chatgpt.com/backend-api/*` | ChatGPT browser backend requests/challenge handling | CORE OPENAI / CHATGPT | Preserve; do not hardcode individual backend paths as a brittle final allowlist |
-| Native Codex passthrough (`src/native-passthrough.ts`) | `https://chatgpt.com/backend-api/codex/models` | native model discovery | CORE OPENAI / CHATGPT, current compatibility | Preserve until later architecture proves removable |
-| Native Codex passthrough | `https://chatgpt.com/backend-api/codex/responses` | native Responses passthrough | CORE OPENAI / CHATGPT, current compatibility | Preserve until later architecture proves removable |
-| Native Codex passthrough | `https://chatgpt.com/backend-api/codex/responses/compact` | native compaction passthrough | CORE OPENAI / CHATGPT, current compatibility | Preserve until later architecture proves removable |
+| Electron browser host / Playwright browser surfaces (`launcher/electron/browser-host.cjs`, `src/chatgpt-session.ts`, browser adapter) | `https://chatgpt.com` | ChatGPT session, Temporary Chat, managed Council conversations, model/turn automation | CORE OPENAI / CHATGPT | Preserve |
+| Electron webRequest filter | `https://chatgpt.com/backend-api/*` | ChatGPT browser backend requests/challenge handling | CORE OPENAI / CHATGPT | Preserve; avoid brittle per-path final allowlist |
+| Native Codex passthrough (`src/native-passthrough.ts`) | `https://chatgpt.com/backend-api/codex/models` | model discovery | CORE OPENAI / CHATGPT, current compatibility | Preserve until later architecture proves removable |
+| Native Codex passthrough | `https://chatgpt.com/backend-api/codex/responses` | Responses passthrough | CORE OPENAI / CHATGPT, current compatibility | Preserve until later architecture proves removable |
+| Native Codex passthrough | `https://chatgpt.com/backend-api/codex/responses/compact` | compaction passthrough | CORE OPENAI / CHATGPT, current compatibility | Preserve until later architecture proves removable |
 | Native Codex passthrough | `https://chatgpt.com/backend-api/codex/alpha/search` | native search passthrough | CORE OPENAI / CHATGPT, current compatibility | Preserve until later architecture proves removable |
-| OpenAI tunnel-client process | OpenAI Tunnel service endpoints, exact remote host(s) not present in JS source | Council Secure MCP Tunnel start/recovery | OPAQUE CORE CLIENT | Preserve capability; Codex must observe and map actual process egress. Replace runtime binary download, not the tunnel service itself. |
-
-The product should not assume that every valid ChatGPT request will forever use one static subpath/host combination. Later hardening should constrain capabilities/client ownership rather than build an unnecessarily brittle URL list.
+| OpenAI `tunnel-client` process | concrete service hosts not encoded in JS source | Council Secure MCP Tunnel start/recovery | OPAQUE CORE CLIENT | Preserve capability; later runtime test must identify/justify process egress |
 
 ## 2. Localhost and local IPC
 
 | Client / code path | Endpoint | Purpose | Classification |
 | --- | --- | --- | --- |
-| Responses runtime config/server | `127.0.0.1:17841` default | Responses-compatible local API + admin lifecycle | LOCALHOST / LOCAL IPC |
+| Responses runtime | `127.0.0.1:17841` default | Responses-compatible local API + admin lifecycle | LOCALHOST / LOCAL IPC |
 | Council HTTP server | `127.0.0.1:17842` default | public Council sync + trusted owner API | LOCALHOST / LOCAL IPC |
 | Electron browser CDP | dynamic `127.0.0.1:<port>` | Playwright/Electron browser control | LOCALHOST / LOCAL IPC |
 | Electron browser control server | dynamic `127.0.0.1:<port>` | authenticated launcher/browser lifecycle control | LOCALHOST / LOCAL IPC |
+| Source-development Vite server (`launcher/scripts/dev.cjs`) | `127.0.0.1:4178` | renderer development server used by `scripts/start-launcher.ts` | LOCALHOST / LOCAL IPC; dev-only |
 | setup health check | `http://127.0.0.1:<configured-port>/healthz` | local runtime readiness | LOCALHOST / LOCAL IPC |
 | turn broker | Windows `\\.\pipe\codex-chatgpt-web-*` or local Unix socket | local broker/tool/turn IPC | LOCALHOST / LOCAL IPC |
 | MCP stdio | process stdin/stdout | tunnel-client → local Council MCP process | LOCALHOST / LOCAL IPC |
 
-Config constrains the Responses host type to literal `127.0.0.1`; the Council HTTP server also binds loopback. Dynamic CDP/control ports explicitly bind `127.0.0.1`.
+Independent Codex observation at revision `b3b9f5401b1bd889a793d09e71a4968b93212f0d` confirmed dev Vite, dynamic CDP and browser-control listeners were loopback-only and found no CWC listener on `0.0.0.0` or `::`.
 
-## 3. Conditional interactive authentication
+## 3. Conditional authentication traffic
 
-The Electron browser permits HTTPS navigation to a bounded set of identity-provider hosts during ChatGPT authentication:
+The Electron ChatGPT browser allows a bounded authentication set:
 
 - `auth.openai.com`
 - `auth0.openai.com`
@@ -60,13 +59,11 @@ The Electron browser permits HTTPS navigation to a bounded set of identity-provi
 
 Classification: **CONDITIONAL INTERACTIVE AUTH**.
 
-These are not direct background API clients in application code. Google/Microsoft/Apple hosts should appear only if the user chooses the associated sign-in method or the ChatGPT authentication flow redirects there. A normal steady-state already-authenticated Council run should not require the application itself to initiate arbitrary traffic to these providers.
-
-Codex QA should distinguish authentication-browser navigation from background application egress.
+This does not mean provider traffic appears only after the user clicks a provider. Independent QA observed the unauthenticated ChatGPT landing page load `accounts.google.com` Script/Stylesheet resources before any provider was selected. Such resources belong to the authentication surface, not an independently implemented CWC background API client.
 
 ## 4. User-initiated external links
 
-`main-council.cjs` permits explicit `shell.openExternal` navigation to a small UI set:
+`main-council.cjs` permits explicit `shell.openExternal` navigation to:
 
 - `https://github.com/Nolane-x/codexweb`
 - `https://chatgpt.com/#settings/Plugins`
@@ -75,135 +72,121 @@ Codex QA should distinguish authentication-browser navigation from background ap
 
 Classification: **USER-INITIATED NAVIGATION**.
 
-These links are not automatic network clients. The ChatGPT/Platform OpenAI destinations are product setup/navigation conveniences. The GitHub project link is not core runtime traffic and may be removed/repointed as product branding/distribution is finalized.
+## 5. Known removable runtime Internet traffic
 
-## 5. Active removable Internet traffic
+### 5.1 Council self-updater
 
-### 5.1 Council self-updater — REMOVABLE APP TRAFFIC
+Production packaged path:
 
-Active path:
+`main-council.cjs -> createUpdateController(...) -> updateController.checkOnce()`.
 
-`main-council.cjs -> createUpdateController(...) -> void updateController.checkOnce()` on normal launcher startup.
+`launcher/electron/council-update.cjs` creates an enabled updater only when the app is packaged and the current platform/architecture has a supported release asset. Therefore:
 
-Known endpoints/client behavior in `launcher/electron/council-update.cjs`:
+- **packaged supported startup:** automatic release check is active;
+- **source-development startup via `scripts/start-launcher.ts`:** `app.isPackaged === false`, updater controller is disabled and `checkOnce()` performs no GitHub request.
+
+Known packaged endpoints:
 
 - `https://api.github.com/repos/Nolane-x/codexweb/releases/latest`
-- release asset URLs constrained to `https://github.com/Nolane-x/codexweb/releases/download/v<version>/...`
-- `checksums.txt` from the same GitHub release
-- HTTPS redirect following for those downloads
-- downloaded release executable/archive is checksum-verified and later handed to a detached update worker.
+- constrained `https://github.com/Nolane-x/codexweb/releases/download/v<version>/...` release asset
+- `checksums.txt` from the same release
 
 Classification: **REMOVABLE APP TRAFFIC**.
 
-Final CWC Personal requires no self-updater/automatic release checking/remote code replacement. Remove the startup check, updater HTTP client, asset download, update worker, prompt/IPC/state, and associated tests together; do not merely hide the UI.
+CWC-006 owns removal of release polling, downloads, update worker/deferred replacement and related UI/IPC/tests.
 
-### 5.2 Automatic OpenAI tunnel-client download — REMOVABLE APP TRAFFIC around a core capability
+### 5.2 Automatic OpenAI tunnel-client acquisition
 
-`src/council/setup.ts` currently calls `installTunnelClient()` from `src/tunnel.ts` on first/replacement setup.
+`src/council/setup.ts` currently calls `installTunnelClient()` from `src/tunnel.ts` for first/replacement setup.
 
-Known download endpoints:
+Pinned release base:
 
-- base: `https://github.com/openai/tunnel-client/releases/download/v0.0.10`
-- platform ZIP: `tunnel-client-v0.0.10-<os>-<arch>.zip`
+`https://github.com/openai/tunnel-client/releases/download/v0.0.10`
+
+Current setup can download:
+
+- `tunnel-client-v0.0.10-<os>-<arch>.zip`
 - `SHA256SUMS.txt`
 
-The downloader follows redirects, limits payloads to 100 MiB, verifies the archive SHA-256, extracts the expected executable, verifies `--version`, stores its binary hash, then executes the downloaded tunnel client.
+The downloader verifies the archive checksum, extracts the expected executable, verifies `--version`, records the binary hash, and executes the binary.
 
-Classification of the **download/install client**: **REMOVABLE APP TRAFFIC**.
+Classification of download/install client: **REMOVABLE APP TRAFFIC**.
 
-Classification of the **resulting tunnel process connection to OpenAI**: **OPAQUE CORE CLIENT**.
+Classification of the resulting tunnel process: **OPAQUE CORE CLIENT**.
 
-Final design must preserve Secure MCP Tunnel functionality without automatic remote executable acquisition—for example by packaging/requiring a reviewed local pinned binary and verifying it before use.
+CWC-006 must remove automatic remote executable acquisition without removing required Secure MCP Tunnel functionality.
 
-## 6. Inherited / detached removable network paths
+## 6. Inherited / detached removable paths
 
-### Old updater
+- `launcher/electron/update.cjs` targets old `miuuyy/codex-chatgpt-web` releases and is detached from the packaged Council entry point. Classification: **REMOVABLE APP TRAFFIC / detached legacy**.
+- `scripts/install-launcher.ps1` resolves/downloads GitHub release installer assets and executes the installer. Classification: **REMOVABLE DISTRIBUTION TRAFFIC**.
+- standalone Unix/cross-platform install/release paths can resolve/download release assets; CWC Personal is Windows-only portable-first. Classification: **REMOVABLE DISTRIBUTION TRAFFIC**.
 
-`launcher/electron/update.cjs` targets the older `miuuyy/codex-chatgpt-web` release API/assets. CWC-004 proved old `main.cjs` is detached from the packaged Council entry point.
+## 7. Build / supply-chain traffic
 
-Classification: **REMOVABLE APP TRAFFIC / detached legacy**.
-
-Delete with old launcher/updater cleanup.
-
-### Standalone Windows latest-release installer
-
-`scripts/install-launcher.ps1`:
-
-- resolves GitHub `releases/latest` unless a version is supplied;
-- downloads the Windows NSIS executable and `checksums.txt` from GitHub;
-- hash-verifies the executable;
-- silently executes the installer and launches the installed application.
-
-Classification: **REMOVABLE distribution traffic**.
-
-The final product is portable folder/ZIP, so this remote installer path conflicts with the portable/no-auto-acquisition target.
-
-### Unix/cross-platform install scripts and non-Windows release paths
-
-Standalone install/release scripts and explicit macOS/Linux distribution jobs may resolve/download GitHub release assets or package dependencies. CWC-004 classified these distribution paths removable for Windows-only CWC Personal.
-
-Classification: **REMOVABLE distribution traffic**.
-
-## 7. Build / supply-chain network
-
-Bun dependency installation and build/release tooling can contact configured package registries or GitHub during developer/CI setup. This is not installed-product runtime traffic.
+Bun dependency installation and Electron/electron-builder tooling may contact configured registries or upstream release infrastructure during development/CI/build. This is not normal installed-product runtime traffic.
 
 Classification: **BUILD / SUPPLY-CHAIN ONLY**.
 
-The later dependency/build-integrity gate owns frozen installs, lifecycle-script review, exact versions, advisories and download/execution investigation. Do not confuse build-time registry traffic with normal CWC runtime egress.
+## 8. Runtime observations from independent Codex QA
 
-## 8. Network-capable mechanisms without independent Internet destination
+Codex tested source revision `b3b9f5401b1bd889a793d09e71a4968b93212f0d` with an isolated CWC data/core-home profile.
 
-These mechanisms are network-capable but their current use is local or delegated:
+Observed product-owned external peers:
 
-- Node/Bun `fetch` / `http` / `https` in server/setup/update/tunnel modules;
-- Playwright/Electron Chromium networking inside controlled ChatGPT surfaces;
+| Process/component | Observed peer | Scenario | Evidence/classification |
+| --- | --- | --- | --- |
+| Electron/Chromium | `104.18.32.47:443` | startup | resolver cache + ChatGPT page target → CORE OPENAI / CHATGPT |
+| Electron/Chromium | `108.177.97.84:443` | startup | temporally correlated with captured `accounts.google.com` Script/Stylesheet resources → CONDITIONAL INTERACTIVE AUTH |
+| Electron/Chromium | `172.217.27.110:443` (`sin11s04-in-f110.1e100.net` reverse DNS) | startup only | Google-owned infrastructure, but requested hostname/purpose not established → UNEXPLAINED |
+| Electron/Chromium | `35.190.80.1:443` (`1.80.190.35.bc.googleusercontent.com` reverse DNS) | startup and idle | Google-owned infrastructure, but requested hostname/purpose not established → UNEXPLAINED |
+
+The two Google-owned IPs above are deliberately **not** promoted to authentication, telemetry, or core traffic based only on reverse DNS. They remain inventory items requiring later attribution or elimination.
+
+No explicit Sentry, PostHog, Segment, Mixpanel, Amplitude, Datadog, or crash-upload client was found in the reviewed source. This is source evidence only, not a claim that the two unexplained browser connections are harmless.
+
+The QA run could not exercise an existing tunnel-client or authenticated managed ChatGPT turn because the isolated profile had no pre-existing Council config/tunnel binary/authenticated CWC session. Those are runtime-coverage limitations, not source-inventory omissions.
+
+## 9. Network-capable mechanisms without an independent destination class
+
+Current mechanisms include:
+
+- Node/Bun `fetch` / HTTP(S) in setup/update/tunnel/server modules;
+- Chromium networking inside controlled ChatGPT/authentication surfaces;
 - `shell.openExternal` for explicit UI navigation;
 - spawned `tunnel-client` process;
-- local `net` servers for free-port discovery/control;
-- named pipe / Unix socket broker.
+- local `net` servers;
+- named pipe / Unix socket broker;
+- stdio MCP transport.
 
-Hardening should reason about which component owns the capability and which destination class it serves, not merely grep for networking APIs.
+Hardening should reason about component ownership and destination class, not merely grep networking APIs.
 
-## 9. No source-identified telemetry/unexplained client
+## 10. CWC-005 acceptance interpretation
 
-This source inventory did **not** identify an application telemetry/analytics/crash-report upload client or another unexplained product-owned Internet endpoint in the reviewed active paths.
+Tracker acceptance criterion:
 
-This is not yet a runtime proof. Electron/Chromium, auth redirects, dependencies and the prebuilt tunnel executable may resolve/connect to hosts not represented by string literals in this repository. Independent CWC-005 Codex QA must capture process-associated runtime connections and reconcile every observed external endpoint with this inventory.
+> Known endpoints/clients are mapped to core OpenAI/ChatGPT, localhost, or removable/unexplained traffic.
 
-Any external endpoint observed during the defined runtime scenarios that cannot be classified as:
+Accordingly, CWC-005 does **not** require the `UNEXPLAINED` class to be empty. It requires observed/source network surfaces to be explicitly inventoried rather than omitted or guessed.
 
-1. ChatGPT/OpenAI core traffic;
-2. conditional user authentication;
-3. current known removable GitHub updater/tunnel-download traffic;
-4. explicit user-opened navigation; or
-5. build/supply-chain activity outside installed runtime
+The two observed Google IP peers are now explicitly classified **UNEXPLAINED**. Later hardening/final portable network verification must determine whether they are legitimate Chromium/ChatGPT/authentication infrastructure, eliminate them through browser/runtime hardening, or otherwise justify their retention.
 
-must be reported as **UNEXPLAINED** and fails CWC-005 until mapped.
+## 11. Expected later verification boundaries
 
-## 10. Expected runtime scenarios for independent verification
+- **CWC-006:** remove self-updater, release polling, update worker and automatic remote code/package acquisition.
+- Later networking/hardening work: remove remaining unnecessary external clients and investigate the unexplained Electron-owned Google peers.
+- Final portable network test: verify the shipped Windows portable product exposes only intended ChatGPT/OpenAI traffic plus localhost/local IPC, with no unresolved unwanted third-party egress.
 
-Codex QA should independently observe at least these scenarios on Windows:
+## 12. CWC-005 conclusion
 
-1. **Launcher startup with an existing authenticated session** — expect ChatGPT session/browser traffic, loopback control, and currently an automatic GitHub release-check attempt because `checkOnce()` is still active before CWC-006 removal.
-2. **Idle steady-state after startup** — expect no periodic arbitrary third-party application API traffic; ChatGPT/browser background requests may continue.
-3. **Council runtime/tunnel start** — expect the pinned tunnel-client process to connect to OpenAI-managed infrastructure; map remote host/IP/process evidence if tooling exposes it.
-4. **Council managed browser action / real ChatGPT turn** — expect ChatGPT/OpenAI browser traffic plus localhost/CDP/control IPC.
-5. **First/replacement tunnel setup only** — current source can contact GitHub `openai/tunnel-client` release URLs to obtain the executable; this is known removable traffic.
-6. **Authentication only if intentionally tested** — Google/Microsoft/Apple identity hosts are conditional browser authentication, not steady-state background clients.
+Known network surface is now mapped as:
 
-Package-manager/build traffic should be captured separately from installed-runtime traffic.
-
-## 11. CWC-005 conclusion
-
-Known source-owned network clients/endpoints are mapped as follows:
-
-- **Core:** ChatGPT/OpenAI browser/backend traffic and the OpenAI Secure MCP Tunnel service.
-- **Local:** loopback Responses/Council/CDP/control endpoints and local pipe/socket/stdio IPC.
-- **Conditional:** bounded browser authentication providers selected by the user.
-- **Removable:** active GitHub Council updater, automatic GitHub tunnel-client acquisition, old updater, standalone release installers and non-Windows distribution traffic.
+- **Core:** ChatGPT/OpenAI browser/backend traffic and required OpenAI Secure MCP Tunnel service.
+- **Local:** Responses/Council/CDP/control/Vite-dev endpoints plus pipe/socket/stdio IPC.
+- **Conditional auth:** bounded OpenAI/Google/Microsoft/Apple authentication surface, including passive provider UI resources.
+- **Removable:** packaged GitHub Council updater, automatic GitHub tunnel-client acquisition, detached old updater and standalone/non-Windows distribution paths.
 - **Build-only:** dependency/release acquisition outside installed runtime.
-- **Unexplained in source:** none identified.
-- **Runtime-opaque:** concrete remote hosts used internally by the pinned OpenAI tunnel-client; independent process/network observation is required.
+- **Opaque core:** concrete service hosts used by the pinned OpenAI tunnel-client.
+- **Unexplained runtime observations:** `172.217.27.110:443` and `35.190.80.1:443`, Electron-owned Google infrastructure not yet conclusively attributed.
 
-No removal was performed in CWC-005. CWC-006 and later hardening work will remove the known unwanted clients while preserving required ChatGPT/OpenAI and localhost behavior.
+No network-capable production source was removed in CWC-005.
