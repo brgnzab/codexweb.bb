@@ -3,6 +3,10 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
+if (process.platform !== "win32" || process.arch !== "x64") {
+  throw new Error(`CWC Personal packaged smoke supports Windows x64 only; received ${process.platform}/${process.arch}`);
+}
+
 const launcherRoot = path.resolve(__dirname, "..");
 const artifactsDirectory = path.join(launcherRoot, "artifacts");
 const launcherManifest = JSON.parse(fs.readFileSync(path.join(launcherRoot, "package.json"), "utf8"));
@@ -11,6 +15,7 @@ const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-package-smo
 const markerPath = path.join(scratch, "ready.json");
 const coreHome = path.join(scratch, "core-home");
 const launcherData = path.join(scratch, "launcher-data");
+const installRoot = path.join(process.env.LOCALAPPDATA || "", "Programs", launcherManifest.name);
 
 function boundedTail(filePath, maxChars = 6_000) {
   try {
@@ -23,14 +28,9 @@ function boundedTail(filePath, maxChars = 6_000) {
 }
 
 function diagnostics(result = {}) {
-  const installRoot = process.platform === "win32"
-    ? path.join(process.env.LOCALAPPDATA || "", "Programs", launcherManifest.name)
-    : "n/a";
-  let installTree = "n/a";
-  if (process.platform === "win32") {
-    try { installTree = fs.existsSync(installRoot) ? fs.readdirSync(installRoot).sort().join(", ") : "missing"; }
-    catch (error) { installTree = `unreadable:${error instanceof Error ? error.message : String(error)}`; }
-  }
+  let installTree = "missing";
+  try { if (fs.existsSync(installRoot)) installTree = fs.readdirSync(installRoot).sort().join(", "); }
+  catch (error) { installTree = `unreadable:${error instanceof Error ? error.message : String(error)}`; }
   return [
     `platform=${process.platform}/${process.arch}`,
     `expectedVersion=${expectedVersion}`,
@@ -61,13 +61,9 @@ function run(command, args, options = {}) {
     timeout: options.timeout || 45_000,
     windowsHide: true,
   });
-  if (result.error) {
-    const error = new Error(`${result.error.message}\n${diagnostics(result)}`);
-    persistDiagnostics(error, result);
-    throw error;
-  }
-  if (result.status !== 0) {
-    const error = new Error(`${command} failed with status ${result.status}: ${result.stderr?.trim() || result.stdout?.trim() || "no output"}\n${diagnostics(result)}`);
+  if (result.error || result.status !== 0) {
+    const detail = result.error?.message || result.stderr?.trim() || result.stdout?.trim() || `status ${result.status}`;
+    const error = new Error(`${command} failed: ${detail}\n${diagnostics(result)}`);
     persistDiagnostics(error, result);
     throw error;
   }
@@ -79,59 +75,31 @@ function artifact(pattern, label) {
   return path.join(artifactsDirectory, matches[0]);
 }
 
-function smokeEnvironment() {
-  return {
+try {
+  const installer = artifact(/-win-x64\.exe$/, "Windows installer");
+  run(installer, ["/S"], { timeout: 120_000 });
+  const executable = path.join(installRoot, `${launcherManifest.build.productName}.exe`);
+  if (!fs.existsSync(executable)) throw new Error(`Packaged launcher executable is missing: ${executable}`);
+
+  const env = {
     ...process.env,
     CODEX_WEB_GPT_LAUNCHER_DATA_DIR: launcherData,
     CODEX_CHATGPT_WEB_HOME: coreHome,
     CODEX_HOME: path.join(scratch, "codex-home"),
     CODEX_WEB_GPT_SMOKE_FILE: markerPath,
   };
-}
-
-try {
-  let executable;
-  let command;
-  let args;
-  const env = smokeEnvironment();
-
-  if (process.platform === "darwin") {
-    const archive = artifact(/-mac-(?:arm64|x64)\.zip$/, "macOS launcher archive");
-    const stage = path.join(scratch, "stage");
-    fs.mkdirSync(stage);
-    run("ditto", ["-x", "-k", archive, stage]);
-    executable = path.join(stage, "Codex Web GPT.app", "Contents", "MacOS", "Codex Web GPT");
-    command = executable;
-    args = ["--launcher-smoke-test"];
-  } else if (process.platform === "linux") {
-    executable = artifact(/-linux-x64\.AppImage$/, "Linux AppImage");
-    fs.chmodSync(executable, 0o755);
-    command = "xvfb-run";
-    args = ["-a", executable, "--launcher-smoke-test"];
-    env.APPIMAGE_EXTRACT_AND_RUN = "1";
-  } else if (process.platform === "win32") {
-    const installer = artifact(/-win-x64\.exe$/, "Windows installer");
-    run(installer, ["/S"], { timeout: 120_000 });
-    executable = path.join(process.env.LOCALAPPDATA || "", "Programs", launcherManifest.name, `${launcherManifest.build.productName}.exe`);
-    command = executable;
-    args = ["--launcher-smoke-test"];
-  } else {
-    throw new Error(`Unsupported package smoke platform: ${process.platform}`);
-  }
-
-  if (!fs.existsSync(executable)) throw new Error(`Packaged launcher executable is missing: ${executable}`);
-  run(command, args, { env });
+  run(executable, ["--launcher-smoke-test"], { env });
   if (!fs.existsSync(markerPath)) throw new Error("Packaged launcher did not write its readiness marker");
   const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
-  if (marker.ok !== true || marker.packaged !== true || marker.runtimeVerified !== true || marker.version !== expectedVersion || marker.platform !== process.platform) {
+  if (marker.ok !== true || marker.packaged !== true || marker.runtimeVerified !== true || marker.version !== expectedVersion || marker.platform !== "win32") {
     throw new Error(`Unexpected packaged launcher marker: ${JSON.stringify(marker)}`);
   }
-  const installedRuntime = path.join(coreHome, "versions", `${expectedVersion}-${process.platform}-${process.arch}`);
+  const installedRuntime = path.join(coreHome, "versions", `${expectedVersion}-win32-x64`);
   const installedManifest = JSON.parse(fs.readFileSync(path.join(installedRuntime, "manifest.json"), "utf8"));
-  if (installedManifest.appVersion !== expectedVersion || installedManifest.platform !== process.platform || installedManifest.arch !== process.arch || !/^[a-f0-9]{64}$/.test(installedManifest.bundleId)) {
+  if (installedManifest.appVersion !== expectedVersion || installedManifest.platform !== "win32" || installedManifest.arch !== "x64" || !/^[a-f0-9]{64}$/.test(installedManifest.bundleId)) {
     throw new Error(`Packaged launcher installed the wrong durable runtime: ${JSON.stringify(installedManifest)}`);
   }
-  process.stdout.write(`PACKAGED_LAUNCHER_SMOKE_OK ${process.platform}/${process.arch}\n`);
+  process.stdout.write("PACKAGED_LAUNCHER_SMOKE_OK win32/x64\n");
 } catch (error) {
   persistDiagnostics(error);
   throw error;
