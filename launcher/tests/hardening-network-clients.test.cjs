@@ -35,11 +35,9 @@ test("Council browser partition rejects arbitrary downloads", async () => {
   assert.deepEqual(removed, [["will-download", blocker]]);
 });
 
-test("retained native upstream client is constrained to ChatGPT Codex endpoints", () => {
-  const source = read(repoRoot, "src", "native-passthrough.ts");
-  assert.match(source, /const CODEX_BACKEND = "https:\/\/chatgpt\.com\/backend-api\/codex"/);
-  assert.match(source, /NativeCodexEndpoint = "models" \| "responses" \| "responses\/compact" \| "alpha\/search"/);
-  assert.doesNotMatch(source, /https:\/\/(?!chatgpt\.com)/);
+test("legacy native Codex upstream client stays removed", () => {
+  assert.equal(fs.existsSync(path.join(repoRoot, "src", "native-passthrough.ts")), false);
+  assert.equal(fs.existsSync(path.join(repoRoot, "src", "server.ts")), false);
 });
 
 test("remote executable acquisition remains absent from current Tunnel setup", () => {
