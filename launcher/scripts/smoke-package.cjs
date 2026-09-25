@@ -16,6 +16,10 @@ const markerPath = path.join(scratch, "ready.json");
 const coreHome = path.join(scratch, "core-home");
 const launcherData = path.join(scratch, "launcher-data");
 const installRoot = path.join(process.env.LOCALAPPDATA || "", "Programs", launcherManifest.name);
+const DEFAULT_COMMAND_TIMEOUT_MS = 45_000;
+// A first packaged launch transactionally copies roughly 181 MB / 6k runtime files.
+// Antivirus and slower Windows storage can make that bounded cold install take several minutes.
+const COLD_RUNTIME_SMOKE_TIMEOUT_MS = 360_000;
 
 function boundedTail(filePath, maxChars = 6_000) {
   try {
@@ -58,7 +62,7 @@ function run(command, args, options = {}) {
     cwd: options.cwd || scratch,
     env: options.env || process.env,
     encoding: "utf8",
-    timeout: options.timeout || 45_000,
+    timeout: options.timeout ?? DEFAULT_COMMAND_TIMEOUT_MS,
     windowsHide: true,
   });
   if (result.error || result.status !== 0) {
@@ -88,7 +92,7 @@ try {
     CODEX_HOME: path.join(scratch, "codex-home"),
     CODEX_WEB_GPT_SMOKE_FILE: markerPath,
   };
-  run(executable, ["--launcher-smoke-test"], { env });
+  run(executable, ["--launcher-smoke-test"], { env, timeout: COLD_RUNTIME_SMOKE_TIMEOUT_MS });
   if (!fs.existsSync(markerPath)) throw new Error("Packaged launcher did not write its readiness marker");
   const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
   if (marker.ok !== true || marker.packaged !== true || marker.runtimeVerified !== true || marker.version !== expectedVersion || marker.platform !== "win32") {
