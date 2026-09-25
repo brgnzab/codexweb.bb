@@ -15,9 +15,7 @@
   },
   "files": ["dist", "README.md", "LICENSE", "LICENSES"],
   "scripts": {
-    "start": "bun run src/cli.ts serve",
-    "setup": "bun run src/cli.ts setup",
-    "doctor": "bun run src/cli.ts doctor",
+    "start": "bun run scripts/start-launcher.ts",
     "test": "bun test tests/*.test.ts",
     "audit": "bun audit",
     "check-version": "bun run scripts/check-version.ts",
