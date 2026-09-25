@@ -52,7 +52,7 @@ node --version
 
 Expected values are exactly `1.3.14` and `v22.23.2`.
 
-CWC-012 does not update these versions. Dependency/toolchain upgrades require a separate audited change.
+CWC-012 does not update these versions merely to make an audit report cleaner. A dependency upgrade is required only when an advisory is materially reachable and cannot be adequately mitigated by the current application boundary.
 
 ## 3. Workspace lifecycle hooks
 
@@ -104,7 +104,20 @@ bun audit > ..\.cwc-data\qa-supply-chain\launcher-audit.txt
 Pop-Location
 ```
 
-Do not reuse an advisory count from an older CWC revision. Record every advisory returned at the tested HEAD, its severity, affected package/version, dependency path, whether it is direct/transitive, and whether it is reachable/material to CWC Personal. Do not update dependencies inside this gate merely to make the report cleaner; a material advisory that blocks acceptance must be returned to GPT Web as a finding.
+Do not reuse an advisory count from an older CWC revision. Record every advisory returned at the tested HEAD, its GHSA/CVE identifier, severity, affected package/version, dependency path, whether it is direct/transitive, and whether it is reachable/material to CWC Personal. Do not update dependencies inside this gate merely to make the report cleaner; a material advisory that blocks acceptance must be returned to GPT Web as a finding.
+
+### Electron reachability review
+
+Electron is a direct runtime dependency and therefore its advisories require application-specific reachability review rather than a blanket "build-only" classification.
+
+For popup/window-sandbox advisories, verify the exact advisory's documented affected versions and workaround against the current source. Current CWC boundaries that must be checked include:
+
+- the local main renderer is sandboxed with `contextIsolation: true`, `nodeIntegration: false`, and installs `setWindowOpenHandler` that denies creation and routes external URLs through the main process;
+- managed ChatGPT turn tabs are sandboxed and their `setWindowOpenHandler` always returns `deny` after either blocking authentication or forwarding ordinary HTTP(S) links externally;
+- the managed ChatGPT home surface allows a child window only for the explicit authentication-provider allowlist; every other popup is denied;
+- the authentication surface installs its own `setWindowOpenHandler` and denies further child-window creation.
+
+Codex must report the exact Electron GHSA IDs returned by `bun audit`. If an advisory is mitigated only when all untrusted popups are denied, do not assume the authentication allowlist is sufficient: explain why the constrained authentication surface does or does not satisfy the advisory's official workaround. If a direct Electron high/critical advisory is materially reachable or has no applicable app-side workaround, CWC-012 fails and an Electron upgrade becomes required.
 
 ## 6. Lockfile and build integrity checks
 
@@ -145,8 +158,9 @@ CWC-012 may PASS only when independent Codex QA demonstrates all of the followin
 1. both installs succeed with `--frozen-lockfile` and neither lockfile changes;
 2. every installed lifecycle hook is enumerated and classified with no UNEXPLAINED hook;
 3. any lifecycle-driven download is version-bound, required and explained; no arbitrary/latest remote-code acquisition is observed;
-4. root and launcher `bun audit` results are captured and materially assessed;
+4. root and launcher `bun audit` results are captured and materially assessed, including exact Electron advisory IDs and reachability;
 5. exact build toolchain versions, including Node `22.23.2`, match this document and the committed workflow/manifest/locks;
-6. verification/build tests pass, or any failure is returned as a concrete CWC-012 defect rather than ignored.
+6. verification/build tests pass, or any failure is returned as a concrete CWC-012 defect rather than ignored;
+7. the current Windows package is produced and its packaged smoke passes before the gate closes.
 
 This document is an audit specification and source evidence. It is not a substitute for the Codex Windows execution required by the tracker.
