@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseRequest } from "../src/responses/parser";
 import { extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/environment";
+import { estimateCompiledChatGptWebInputTokens } from "../src/adapters/chatgpt-web/input-tokens";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
-import { estimateChatGptWebInputTokens } from "../src/adapters/chatgpt-web/usage";
 import { ChatGptMarkdownBuffer } from "../src/adapters/chatgpt-web/markdown";
 import {
   CHATGPT_LUNA_CHECKPOINT_MAX_TOKENS,
@@ -53,6 +53,14 @@ function request(
       "x-codex-turn-metadata": JSON.stringify({ thread_id: threadId, turn_id: turnId }),
     },
   });
+}
+
+function compiledInputTokens(
+  parsed: ReturnType<typeof request>,
+  capabilities: { localToolsEnabled: boolean; solAvailable: boolean; proAvailable: boolean },
+): number {
+  const compiled = compileChatGptWebPrompt(parsed, capabilities);
+  return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId);
 }
 
 test("Luna checkpoint stream hides a marker split across arbitrary DOM deltas", () => {
@@ -187,8 +195,8 @@ test("Luna checkpoint replaces only exact-parent history and preserves the curre
   expect(encoded).not.toContain("Old operational contract");
   expect(encoded).not.toContain("Original task");
   const capabilities = { localToolsEnabled: false, solAvailable: false, proAvailable: false };
-  expect(estimateChatGptWebInputTokens(applied.parsed, capabilities))
-    .toBeLessThan(estimateChatGptWebInputTokens(next, capabilities));
+  expect(compiledInputTokens(applied.parsed, capabilities))
+    .toBeLessThan(compiledInputTokens(next, capabilities));
 
   const continued = request(threadId, nextTurnId, [
     message("developer", "Old operational contract", sourceTurnId),
@@ -215,8 +223,8 @@ test("Luna checkpoint replaces only exact-parent history and preserves the curre
   expect(continuedEncoded).toContain("Current-turn progress commentary");
   expect(continuedEncoded).toContain("current tool evidence");
   expect(continuedEncoded).not.toContain("Original task");
-  expect(estimateChatGptWebInputTokens(appliedContinuation.parsed, capabilities))
-    .toBeGreaterThan(estimateChatGptWebInputTokens(applied.parsed, capabilities));
+  expect(compiledInputTokens(appliedContinuation.parsed, capabilities))
+    .toBeGreaterThan(compiledInputTokens(applied.parsed, capabilities));
 
   const branch = request(threadId, "turn_branch", [
     message("assistant", "A different parent answer.", sourceTurnId),
