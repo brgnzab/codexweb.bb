@@ -5,9 +5,14 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 
-test("Electron starts through the hardened Council entrypoint", () => {
+test("Electron starts normal Council sessions through the hardened entrypoint", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-  assert.equal(pkg.main, "electron/main-hardened.cjs");
+  assert.equal(pkg.main, "electron/main-dispatch.cjs");
+  const dispatch = fs.readFileSync(path.join(root, "electron", "main-dispatch.cjs"), "utf8");
+  assert.match(dispatch, /process\.argv\.includes\("--launcher-smoke-test"\)/);
+  assert.match(dispatch, /require\("\.\/smoke-main\.cjs"\)/);
+  assert.match(dispatch, /require\("\.\/main-hardened\.cjs"\)/);
+
   const hardened = fs.readFileSync(path.join(root, "electron", "main-hardened.cjs"), "utf8");
   assert.match(hardened, /require\("\.\/browser-host\.cjs"\)/);
   assert.match(hardened, /BrowserHost\.prototype\.bindWebContents/);
