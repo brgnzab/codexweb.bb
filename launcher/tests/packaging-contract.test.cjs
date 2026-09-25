@@ -45,6 +45,17 @@ test("packager accepts only Windows x64 and never publishes automatically", () =
   assert.doesNotMatch(packager, /--mac|--linux|AppImage|\.dmg/);
 });
 
+test("packaged smoke gives the cold runtime copy its own bounded timeout", () => {
+  const smoke = read(launcherRoot, "scripts", "smoke-package.cjs");
+  assert.match(smoke, /const DEFAULT_COMMAND_TIMEOUT_MS = 45_000;/);
+  assert.match(smoke, /const COLD_RUNTIME_SMOKE_TIMEOUT_MS = 360_000;/);
+  assert.match(smoke, /timeout: options\.timeout \?\? DEFAULT_COMMAND_TIMEOUT_MS/);
+  assert.match(
+    smoke,
+    /run\(executable, \["--launcher-smoke-test"\], \{ env, timeout: COLD_RUNTIME_SMOKE_TIMEOUT_MS \}\);/,
+  );
+});
+
 test("retired installer and self-update source stay absent", () => {
   for (const relative of [
     "scripts/install-launcher.sh",
