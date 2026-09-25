@@ -51,7 +51,9 @@ describe("public repository hygiene", () => {
     const fakeCredentialUrl = "https://fixture-user:" + "fixture-password@example.com/path";
     expect(secretTextFindingsForPath(fakeCredentialUrl, "node_modules/fast-uri/test/fixtures/url.js")).toEqual([]);
     expect(secretTextFindingsForPath(fakeCredentialUrl, "node_modules/zod/tests/url.test.js")).toEqual([]);
-    expect(secretTextFindingsForPath(fakeCredentialUrl, "node_modules/domino/test/url.js")).toEqual([]);
+    expect(secretTextFindingsForPath(fakeCredentialUrl, "node_modules/@mixmark-io/domino/test/domino.js")).toEqual([]);
+    expect(secretTextFindingsForPath(fakeCredentialUrl, "node_modules/domino/test/domino.js"))
+      .toContain("credential-bearing URL");
     expect(secretTextFindingsForPath(fakeCredentialUrl, "node_modules/other-package/test/url.js"))
       .toContain("credential-bearing URL");
     expect(secretTextFindingsForPath(fakeCredentialUrl, "node_modules/fast-uri/index.js"))

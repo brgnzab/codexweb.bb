@@ -14,7 +14,7 @@ const SAFE_FIXTURES = [
   "Bearer launcher-control-token-0123456789abcdefghijklmnop",
   "Bearer chatgpt-session-token",
 ];
-const KNOWN_VENDOR_URL_FIXTURE_PACKAGES = ["domino", "zod", "fast-uri"];
+const KNOWN_VENDOR_URL_FIXTURE_PACKAGES = ["@mixmark-io/domino", "zod", "fast-uri"];
 const SENSITIVE_STATE_BASENAMES = new Set([
   "cookies",
   "cookies-journal",
