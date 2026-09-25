@@ -1,5 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { parseTunnelStatus, tunnelCommandOutput, tunnelConnectLaunchError } from "../src/tunnel";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { installTunnelClient, parseTunnelStatus, tunnelCommandOutput, tunnelConnectLaunchError } from "../src/tunnel";
+
+describe("tunnel provisioning boundary", () => {
+  test("never downloads a missing tunnel client implicitly", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cwc-local-tunnel-"));
+    const previous = process.env.CODEX_CHATGPT_WEB_HOME;
+    process.env.CODEX_CHATGPT_WEB_HOME = root;
+    try {
+      await expect(installTunnelClient()).rejects.toThrow("Automatic tunnel-client download is disabled");
+    } finally {
+      if (previous === undefined) delete process.env.CODEX_CHATGPT_WEB_HOME;
+      else process.env.CODEX_CHATGPT_WEB_HOME = previous;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("tunnel status boundary", () => {
   test("requires the managed runtime process, health, and readiness together", () => {
