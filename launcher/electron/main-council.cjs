@@ -58,8 +58,6 @@ const { createLogger, installProcessDiagnosticGuards, registerLoggedIpc } = requ
 const { RuntimeHost, COUNCIL_CONNECTOR_NAME } = require("./runtime.cjs");
 const { ensurePackagedRuntime } = require("./runtime-install.cjs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
-const { runtimeBundlePaths } = require("./runtime-command.cjs");
-const { createUpdateController } = require("./council-update.cjs");
 const { createStateStore, nextSessionRefreshReminderAt, validateSidebarState } = require("./state.cjs");
 const { MIN_WINDOW_BOUNDS, readWindowState, trackWindowState } = require("./window-state.cjs");
 
@@ -84,7 +82,7 @@ const APP_ICON_PATH = path.join(__dirname, "..", "assets", "icon.png");
 
 app.setName("CodexWeb Council");
 if (process.platform === "win32") app.setAppUserModelId("dev.codexwebgpt.launcher");
-// Keep the old data directory only for seamless ChatGPT login/update continuity. Council never
+// Keep the old data directory only for seamless ChatGPT login continuity. Council never
 // reads or mutates CODEX_HOME / ~/.codex from this launcher.
 const configuredUserData = process.env.CODEX_WEB_GPT_LAUNCHER_DATA_DIR?.trim();
 const launcherUserData = configuredUserData ? path.resolve(configuredUserData) : path.join(app.getPath("appData"), "Codex Web GPT");
@@ -99,7 +97,6 @@ let browserControl = null;
 let runtimeHost = null;
 let runtimeSupervisor = null;
 let councilConnectionSupervisor = null;
-let updateController = null;
 let tray = null;
 let lastOperation = null;
 let smokePassedThisSession = false;
@@ -232,7 +229,7 @@ function registerIpc({ logger, stateStore }) {
     urls: { github: GITHUB_URL, x: GITHUB_URL, connectors: CONNECTORS_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
     platform: process.platform, packaged: app.isPackaged, version: app.getVersion(),
     smokePassed: smokePassedThisSession || smokePassedForCurrentVersion(stateStore.read()), operation: lastOperation,
-    update: updateController?.getState() ?? { status: "disabled" },
+    update: { status: "disabled" },
   }));
   handle("launcher:council-runtime-snapshot", () => councilRuntimeSnapshot());
   handle("launcher:set-language", (_event, language) => stateStore.update({ language: language === "zh-CN" ? "zh-CN" : "en" }));
@@ -252,7 +249,23 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:session-reminder-dismiss", () => { const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() }); send("launcher:state-changed", state); return state; });
   handle("launcher:browser-smoke", async () => { const result = await browserHost.smokeTest(); smokePassedThisSession = true; stateStore.update({ browserSmokePassed: true, browserSmokeVersion: app.getVersion() }); return result; });
   handle("launcher:setup-mcp", async (_event, input = {}) => {
-    const result = await runtimeHost.setupCouncilMcp({ tunnelId: typeof input.tunnelId === "string" ? input.tunnelId.trim() : "", runtimeKey: typeof input.runtimeKey === "string" ? input.runtimeKey : "", replace: input.replace === true });
+    const replace = input.replace === true;
+    let tunnelClientPath = "";
+    if (replace) {
+      const selected = await dialog.showOpenDialog(mainWindow, {
+        title: "Select reviewed OpenAI tunnel-client v0.0.10",
+        properties: ["openFile"],
+        ...(process.platform === "win32" ? { filters: [{ name: "Tunnel client", extensions: ["exe"] }] } : {}),
+      });
+      if (selected.canceled || selected.filePaths.length !== 1) throw new Error("Council Tunnel setup requires a reviewed local tunnel-client binary");
+      tunnelClientPath = selected.filePaths[0];
+    }
+    const result = await runtimeHost.setupCouncilMcp({
+      tunnelId: typeof input.tunnelId === "string" ? input.tunnelId.trim() : "",
+      runtimeKey: typeof input.runtimeKey === "string" ? input.runtimeKey : "",
+      tunnelClientPath,
+      replace,
+    });
     const state = stateStore.update({ mcpRuntimeInstalled: true, mcpSetupComplete: false, mcpGuideStep: 2 }); send("launcher:state-changed", state);
     return { ok: true, stdout: result.stdout };
   });
@@ -308,7 +321,6 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));
   handle("launcher:logs", (_event, limit) => logger.recent(limit));
   handle("launcher:open-logs", async () => { const error = await shell.openPath(path.dirname(logger.filePath)); if (error) throw new Error(error); return logger.filePath; });
-  handle("launcher:update-install", async () => { if (!updateController) throw new Error("Council updates are unavailable"); const launch = await updateController.beginInstall(); const result = await requestQuit(); if (!result.ok) { updateController.cancelInstall(launch); throw new Error(result.message); } return true; });
   handle("launcher:window-state", event => windowStateSnapshot(BrowserWindow.fromWebContents(event.sender)));
   ipcMain.on("launcher:window-control", (event, action) => { const window = BrowserWindow.fromWebContents(event.sender); if (!window || window.isDestroyed()) return; if (action === "close") window.close(); else if (action === "minimize") window.minimize(); else if (action === "zoom") window.isMaximized() ? window.unmaximize() : window.maximize(); });
 }
@@ -364,8 +376,6 @@ async function start() {
   councilConnectionSupervisor = new CouncilConnectionSupervisor({ logger, capabilities: () => councilCapabilities(stateStore), publish: state => send("launcher:council-runtime", state) });
   browserHost = new BrowserHost({ window: mainWindow, descriptorPath: BROWSER_DESCRIPTOR_PATH, cdpPort, control: browserControl.descriptor(), getConnectorName: () => COUNCIL_CONNECTOR_NAME, helper: { executable: process.execPath, script: BROWSER_HELPER_PATH }, logger, publishState: state => send("launcher:browser-state", state) });
   await browserHost.ready();
-  const updaterRuntimeRoot = runtimeRootProvider();
-  updateController = createUpdateController({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch, packaged: app.isPackaged, executablePath: process.execPath, runtimeExecutable: updaterRuntimeRoot ? runtimeBundlePaths(updaterRuntimeRoot, process.platform).executable : null, logsDirectory: app.getPath("logs"), publish: state => send("launcher:update-state", state), logger });
   registerIpc({ logger, stateStore });
   councilConnectionSupervisor.start();
   const trayAvailable = createTray(logger); if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", showMainWindow);
@@ -387,7 +397,6 @@ async function start() {
   }
 
   void browserHost.refreshAuthentication().catch(error => logger.warn("browser.session_refresh_failed", { message: error instanceof Error ? error.message : String(error) }));
-  void updateController.checkOnce();
   void (async () => {
     const upgrade = await runtimeHost.upgradeManagedRuntime();
     if (upgrade.updated) logger.info("council.runtime_upgraded", { fromVersion: upgrade.fromVersion, toVersion: upgrade.toVersion });
