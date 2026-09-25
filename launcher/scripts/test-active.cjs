@@ -4,12 +4,8 @@ const { spawnSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
 const testsDir = path.join(root, "tests");
-const retiredCodexContracts = new Set([
-  "renderer-wiring.test.cjs",
-  "runtime-host.test.cjs",
-]);
 const files = fs.readdirSync(testsDir)
-  .filter(name => name.endsWith(".test.cjs") && !retiredCodexContracts.has(name))
+  .filter(name => name.endsWith(".test.cjs"))
   .sort()
   .map(name => path.join("tests", name));
 
