@@ -40,7 +40,7 @@ test("authentication uses a fresh sandboxed owned surface, never popup-owned Web
   assert.match(auth, /contents\.setWindowOpenHandler\([\s\S]*?return \{ action: "deny" \}/);
   assert.match(auth, /will-navigate/);
   assert.match(auth, /will-redirect/);
-  assert.match(auth, /allowedAuthUrl\(url\)/);
+  assert.match(auth, /allowedAuthNavigationUrl\(url\)/);
 });
 
 test("turn surfaces and local renderer remain sandboxed with child windows denied", () => {
