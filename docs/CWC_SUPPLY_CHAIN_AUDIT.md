@@ -33,6 +33,7 @@ Target product platform: **Windows 11 x64**.
 | Component | Exact version / contract | Authority |
 | --- | --- | --- |
 | Bun package manager/runtime | `1.3.14` | root `packageManager`, root `engines`, CI setup |
+| Node.js | `22.23.2` | root `engines`; CI/release `actions/setup-node@v6` pin |
 | TypeScript | `5.9.3` | root + launcher manifests/locks |
 | Electron | `41.7.1` | launcher manifest + launcher lock |
 | electron-builder | `26.15.3` | launcher lock (manifest requests `^26.8.1`) |
@@ -41,6 +42,15 @@ Target product platform: **Windows 11 x64**.
 | Playwright Core | `1.62.0` | root manifest + root lock |
 | MCP SDK | `1.30.0` | root lock |
 | Windows packaged runtime | baseline Bun `1.3.14` prepared by `scripts/prepare-windows-baseline-bun.ps1` | CI/release build contract |
+
+Before audit/build execution, verify the host toolchain:
+
+```powershell
+bun --version
+node --version
+```
+
+Expected values are exactly `1.3.14` and `v22.23.2`.
 
 CWC-012 does not update these versions. Dependency/toolchain upgrades require a separate audited change.
 
@@ -136,7 +146,7 @@ CWC-012 may PASS only when independent Codex QA demonstrates all of the followin
 2. every installed lifecycle hook is enumerated and classified with no UNEXPLAINED hook;
 3. any lifecycle-driven download is version-bound, required and explained; no arbitrary/latest remote-code acquisition is observed;
 4. root and launcher `bun audit` results are captured and materially assessed;
-5. exact build toolchain versions match this document and the committed locks;
+5. exact build toolchain versions, including Node `22.23.2`, match this document and the committed workflow/manifest/locks;
 6. verification/build tests pass, or any failure is returned as a concrete CWC-012 defect rather than ignored.
 
 This document is an audit specification and source evidence. It is not a substitute for the Codex Windows execution required by the tracker.
