@@ -20,6 +20,7 @@ export interface CouncilSetupOptions {
   browserHostDescriptorPath: string;
   tunnelId?: string;
   runtimeKeyFile?: string;
+  tunnelClientPath?: string;
 }
 
 export interface CouncilSetupResult {
@@ -57,7 +58,7 @@ export async function setupCouncil(options: CouncilSetupOptions): Promise<Counci
   const base = previousCouncil ?? defaultConfig("full");
   const tunnel = freshCredentials
     ? createTunnelConfig({
-        binaryPath: await installTunnelClient(),
+        binaryPath: await installTunnelClient(options.tunnelClientPath),
         tunnelId: options.tunnelId!,
         runtimeKeyFile: installRuntimeKey(options.runtimeKeyFile!),
         profileName: "codexweb-council",
@@ -106,12 +107,14 @@ export async function runCouncilSetupCommand(input: string[]): Promise<void> {
   const descriptor = takeOption(args, "--browser-host-descriptor");
   const tunnelId = takeOption(args, "--tunnel-id");
   const runtimeKeyFile = takeOption(args, "--runtime-key-file");
+  const tunnelClientPath = takeOption(args, "--tunnel-client-path");
   if (args.length > 0) throw new Error(`Unknown Council setup arguments: ${args.join(" ")}`);
   if (!descriptor) throw new Error("council-setup requires --browser-host-descriptor");
   const result = await setupCouncil({
     browserHostDescriptorPath: descriptor,
     ...(tunnelId ? { tunnelId } : {}),
     ...(runtimeKeyFile ? { runtimeKeyFile } : {}),
+    ...(tunnelClientPath ? { tunnelClientPath } : {}),
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
