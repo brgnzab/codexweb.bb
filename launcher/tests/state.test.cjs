@@ -10,7 +10,7 @@ const {
   validateSidebarState,
 } = require("../electron/state.cjs");
 
-test("launcher state persists onboarding, language, and autostart atomically", () => {
+test("launcher state persists current settings with autostart forced off", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-launcher-state-"));
   const file = path.join(root, "state.json");
   try {
@@ -21,7 +21,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       onboardingComplete: false,
       githubOpened: false,
       xOpened: false,
-      autoStart: true,
+      autoStart: false,
       bridgeEnabled: true,
       keepRunningOnClose: true,
       showBrowserDuringTurns: true,
@@ -35,6 +35,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
     store.update({
       language: "zh-CN",
       onboardingComplete: true,
+      autoStart: true,
       keepRunningOnClose: false,
       browserSmokePassed: true,
       browserSmokeVersion: "0.2.0",
@@ -45,7 +46,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       onboardingComplete: true,
       githubOpened: false,
       xOpened: false,
-      autoStart: true,
+      autoStart: false,
       bridgeEnabled: true,
       keepRunningOnClose: false,
       showBrowserDuringTurns: true,
@@ -73,7 +74,7 @@ test("sidebar state accepts only bounded native shell dimensions", () => {
   assert.throws(() => validateSidebarState({ open: true, width: 900 }), /between 240 and 420/);
 });
 
-test("persisted sidebar corruption is repaired without changing the rest of launcher state", () => {
+test("persisted corruption is repaired and inherited autostart is forced off", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-sidebar-state-"));
   const file = path.join(root, "state.json");
   try {
@@ -81,7 +82,7 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       version: 1,
       language: "zh-CN",
       onboardingComplete: "yes",
-      autoStart: "yes",
+      autoStart: true,
       browserSmokePassed: "yes",
       browserSmokeVersion: { invalid: true },
       sidebarOpen: "yes",
@@ -96,7 +97,7 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       onboardingComplete: false,
       githubOpened: false,
       xOpened: false,
-      autoStart: true,
+      autoStart: false,
       bridgeEnabled: true,
       keepRunningOnClose: true,
       showBrowserDuringTurns: true,
