@@ -10,7 +10,7 @@ const DEFAULT_STATE = Object.freeze({
   onboardingComplete: false,
   githubOpened: false,
   xOpened: false,
-  autoStart: true,
+  autoStart: false,
   bridgeEnabled: true,
   keepRunningOnClose: true,
   showBrowserDuringTurns: true,
@@ -31,7 +31,7 @@ function readState(filePath) {
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
     if (!parsed || parsed.version !== 1) return { ...DEFAULT_STATE };
-    const state = { ...DEFAULT_STATE, ...parsed };
+    const state = { ...DEFAULT_STATE, ...parsed, autoStart: false };
     if (state.language !== null && state.language !== "en" && state.language !== "zh-CN") {
       state.language = DEFAULT_STATE.language;
     }
@@ -39,7 +39,6 @@ function readState(filePath) {
       "onboardingComplete",
       "githubOpened",
       "xOpened",
-      "autoStart",
       "bridgeEnabled",
       "keepRunningOnClose",
       "showBrowserDuringTurns",
@@ -101,7 +100,7 @@ function createStateStore(filePath) {
       return structuredClone(state);
     },
     update(patch) {
-      const next = { ...state, ...patch, version: 1 };
+      const next = { ...state, ...patch, autoStart: false, version: 1 };
       writeState(filePath, next);
       state = next;
       return structuredClone(next);
