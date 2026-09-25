@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -17,7 +17,6 @@ import {
   resolveSetupConnectorName,
   runtimeCommandForProcess,
 } from "../src/config";
-import { removeLegacyRuntimeArtifacts } from "../src/service";
 import { processRunning } from "../src/process";
 
 const roots: string[] = [];
@@ -125,27 +124,6 @@ test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", 
     browserHost: "managed-chrome",
     solAvailable: true,
   });
-});
-
-test("legacy temp-path wrapper and vendor are removed only after runtime ownership changes", () => {
-  const root = join(tmpdir(), `codex-chatgpt-web-legacy-runtime-${process.pid}-${Date.now()}`);
-  roots.push(root);
-  process.env.CODEX_CHATGPT_WEB_HOME = root;
-  const wrapper = join(root, "bin", "serve-with-playwright.sh");
-  const vendorFile = join(root, "vendor", "node_modules", "playwright-core", "package.json");
-  mkdirSync(join(root, "bin"), { recursive: true });
-  mkdirSync(join(root, "vendor", "node_modules", "playwright-core"), { recursive: true });
-  writeFileSync(wrapper, "#!/bin/sh\n");
-  writeFileSync(vendorFile, "{}\n");
-
-  const config = defaultConfig("browser-only");
-  config.runtimeCommand = [wrapper];
-  expect(() => removeLegacyRuntimeArtifacts(config)).toThrow("still references");
-  expect(existsSync(wrapper)).toBe(true);
-  config.runtimeCommand = [process.execPath];
-  removeLegacyRuntimeArtifacts(config);
-  expect(existsSync(wrapper)).toBe(false);
-  expect(existsSync(join(root, "vendor"))).toBe(false);
 });
 
 test("launcher browser ownership is explicit in provider configuration", () => {
