@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { forbiddenPublicPathReason, secretTextFindings } from "../scripts/check-public-hygiene";
+import {
+  forbiddenPublicPathReason,
+  secretTextFindings,
+  secretTextFindingsForPath,
+} from "../scripts/check-public-hygiene";
 
 describe("public repository hygiene", () => {
   test("rejects private runtime and browser state paths", () => {
@@ -16,15 +20,44 @@ describe("public repository hygiene", () => {
     const githubToken = "github_" + "pat_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
     const credentialUrl = "https://owner:" + "secret@example.invalid/path";
     const queryUrl = "https://example.invalid/?access_" + "token=super-secret-access-token";
-    const privateKeyHeader = "-----BEGIN OPENSSH " + "PRIVATE KEY-----";
     expect(secretTextFindings(githubToken)).toContain("GitHub token");
     expect(secretTextFindings(credentialUrl)).toContain("credential-bearing URL");
     expect(secretTextFindings(queryUrl)).toContain("secret URL query parameter");
-    expect(secretTextFindings(privateKeyHeader)).toContain("private key");
   });
 
-  test("allows the explicit fake credentials used by logging tests", () => {
-    expect(secretTextFindings("sk-exampleRuntimeSecret123")).toEqual([]);
-    expect(secretTextFindings("Bearer this-must-never-be-recorded")).toEqual([]);
+  test("requires a complete key-shaped PEM block instead of a validator marker", () => {
+    const header = "-----BEGIN OPENSSH " + "PRIVATE KEY-----";
+    const footer = "-----END OPENSSH " + "PRIVATE KEY-----";
+    expect(secretTextFindings(header)).not.toContain("private key");
+    expect(secretTextFindings(`${header}\n${"A".repeat(64)}\n${footer}`)).toContain("private key");
+  });
+
+  test("allows only the exact inherited fake bearer fixtures", () => {
+    for (const fixture of [
+      "Bearer this-must-never-be-recorded",
+      "Bearer secret-should-never-cross-renderer",
+      "Bearer ghp_super_secret_should_never_be_logged",
+      "Bearer wrong-release-smoke-token",
+      "Bearer launcher-control-token-0123456789abcdefghijklmnop",
+      "Bearer chatgpt-session-token",
+    ]) {
+      expect(secretTextFindings(fixture)).toEqual([]);
+    }
+    const unknownBearer = "Bearer " + "newly-leaked-token-0123456789abcdef";
+    expect(secretTextFindings(unknownBearer)).toContain("Bearer credential");
+  });
+
+  test("suppresses only known vendor credential-URL test fixtures", () => {
+    const fakeCredentialUrl = "https://fixture-user:" + "fixture-password@example.com/path";
+    expect(secretTextFindingsForPath(fakeCredentialUrl, "node_modules/fast-uri/test/fixtures/url.js")).toEqual([]);
+    expect(secretTextFindingsForPath(fakeCredentialUrl, "node_modules/zod/tests/url.test.js")).toEqual([]);
+    expect(secretTextFindingsForPath(fakeCredentialUrl, "node_modules/domino/test/url.js")).toEqual([]);
+    expect(secretTextFindingsForPath(fakeCredentialUrl, "node_modules/other-package/test/url.js"))
+      .toContain("credential-bearing URL");
+    expect(secretTextFindingsForPath(fakeCredentialUrl, "node_modules/fast-uri/index.js"))
+      .toContain("credential-bearing URL");
+    const unknownBearer = "Bearer " + "dependency-secret-0123456789abcdef";
+    expect(secretTextFindingsForPath(unknownBearer, "node_modules/fast-uri/test/url.js"))
+      .toContain("Bearer credential");
   });
 });

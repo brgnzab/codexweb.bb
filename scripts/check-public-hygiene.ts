@@ -8,7 +8,13 @@ const SAFE_FIXTURES = [
   "sk-exampleRuntimeSecret123",
   "Bearer this-must-never-be-recorded",
   "https://owner:password@example.invalid/path?access_token=very-secret-access-token",
+  "Bearer secret-should-never-cross-renderer",
+  "Bearer ghp_super_secret_should_never_be_logged",
+  "Bearer wrong-release-smoke-token",
+  "Bearer launcher-control-token-0123456789abcdefghijklmnop",
+  "Bearer chatgpt-session-token",
 ];
+const KNOWN_VENDOR_URL_FIXTURE_PACKAGES = ["domino", "zod", "fast-uri"];
 const SENSITIVE_STATE_BASENAMES = new Set([
   "cookies",
   "cookies-journal",
@@ -27,7 +33,7 @@ const SENSITIVE_STATE_BASENAMES = new Set([
   "window-state.json",
 ]);
 const SECRET_PATTERNS: Array<[string, RegExp]> = [
-  ["private key", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
+  ["private key", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\r\n]+[A-Za-z0-9+/=\r\n]{32,}-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
   ["GitHub token", /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/],
   ["OpenAI-style secret", /\bsk-[A-Za-z0-9_-]{20,}\b/],
   ["AWS access key", /\bAKIA[0-9A-Z]{16}\b/],
@@ -64,6 +70,23 @@ export function secretTextFindings(value: string): string[] {
   return SECRET_PATTERNS.filter(([, pattern]) => pattern.test(text)).map(([label]) => label);
 }
 
+function isKnownVendorFixture(displayPath: string, finding: string): boolean {
+  if (finding !== "credential-bearing URL") return false;
+  const normalized = `/${normalizePath(displayPath).toLowerCase()}`;
+  if (!normalized.includes("/node_modules/")) return false;
+  const fixturePath = /\/(?:test|tests|fixture|fixtures|__tests__)\//.test(normalized)
+    || /\/[^/]*(?:test|spec)\.[^/]+$/.test(normalized);
+  if (!fixturePath) return false;
+  return KNOWN_VENDOR_URL_FIXTURE_PACKAGES.some(packageName => (
+    normalized.includes(`/node_modules/${packageName}/`)
+    || normalized.includes(`/node_modules/.bun/${packageName}@`)
+  ));
+}
+
+export function secretTextFindingsForPath(value: string, displayPath: string): string[] {
+  return secretTextFindings(value).filter(finding => !isKnownVendorFixture(displayPath, finding));
+}
+
 function textContent(path: string): string | undefined {
   const size = statSync(path).size;
   if (size > MAX_TEXT_BYTES) return undefined;
@@ -77,7 +100,7 @@ function scanFile(path: string, displayPath: string, findings: string[]): void {
   if (pathReason) findings.push(`${displayPath}: forbidden ${pathReason}`);
   const text = textContent(path);
   if (text === undefined) return;
-  for (const finding of secretTextFindings(text)) findings.push(`${displayPath}: detected ${finding}`);
+  for (const finding of secretTextFindingsForPath(text, displayPath)) findings.push(`${displayPath}: detected ${finding}`);
 }
 
 function trackedFiles(): string[] {
