@@ -5,12 +5,16 @@ const path = require("node:path");
 
 const launcherRoot = path.resolve(__dirname, "..");
 const manifest = JSON.parse(fs.readFileSync(path.join(launcherRoot, "package.json"), "utf8"));
+const dispatch = fs.readFileSync(path.join(launcherRoot, "electron", "main-dispatch.cjs"), "utf8");
 const hardened = fs.readFileSync(path.join(launcherRoot, "electron", "main-hardened.cjs"), "utf8");
 const main = fs.readFileSync(path.join(launcherRoot, "electron", "main-council.cjs"), "utf8");
 const browser = fs.readFileSync(path.join(launcherRoot, "electron", "browser-host.cjs"), "utf8");
 
-test("production Electron main installs popup hardening before Council startup", () => {
-  assert.equal(manifest.main, "electron/main-hardened.cjs");
+test("production Electron main dispatches normal startup through popup hardening before Council", () => {
+  assert.equal(manifest.main, "electron/main-dispatch.cjs");
+  assert.match(dispatch, /--launcher-smoke-test/);
+  assert.match(dispatch, /require\("\.\/smoke-main\.cjs"\)/);
+  assert.match(dispatch, /require\("\.\/main-hardened\.cjs"\)/);
   assert.match(hardened, /require\("\.\/browser-host\.cjs"\)/);
   assert.match(hardened, /BrowserHost\.prototype\.bindWebContents/);
   assert.match(hardened, /BrowserHost\.prototype\.createAuthView/);
