@@ -1,63 +1,34 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
-import { unzipSync } from "fflate";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { AppConfig, TunnelConfig } from "./config";
 import { atomicWriteFile, getConfigDir } from "./config";
 import { runCommand, runChecked } from "./process";
 
 const TUNNEL_VERSION = "0.0.10";
-const RELEASE_BASE = `https://github.com/openai/tunnel-client/releases/download/v${TUNNEL_VERSION}`;
-const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024;
+const MAX_LOCAL_BINARY_BYTES = 100 * 1024 * 1024;
 export const TUNNEL_READY_TIMEOUT_MS = 120_000;
 const TUNNEL_STATUS_POLL_INTERVAL_MS = 1_000;
 
-interface TunnelInstallManifest {
+interface LegacyTunnelInstallManifest {
   version: 1;
   tunnelClientVersion: string;
-  asset: string;
-  archiveSha256: string;
+  asset?: string;
+  archiveSha256?: string;
   binarySha256: string;
 }
 
+interface LocalTunnelInstallManifest {
+  version: 2;
+  tunnelClientVersion: string;
+  source: "local";
+  binarySha256: string;
+}
+
+type TunnelInstallManifest = LegacyTunnelInstallManifest | LocalTunnelInstallManifest;
+
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
-}
-
-function platformAsset(): string {
-  const os = process.platform === "darwin" ? "darwin"
-    : process.platform === "linux" ? "linux"
-      : process.platform === "win32" ? "windows"
-        : undefined;
-  const arch = process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "amd64" : undefined;
-  if (!os || !arch) throw new Error(`openai/tunnel-client has no pinned build for ${process.platform}/${process.arch}`);
-  return `tunnel-client-v${TUNNEL_VERSION}-${os}-${arch}.zip`;
-}
-
-async function fetchBytes(url: string, timeoutMs = 120_000): Promise<Uint8Array> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { redirect: "follow", signal: controller.signal });
-    if (!response.ok) throw new Error(`Download failed (${response.status}): ${url}`);
-    const length = Number(response.headers.get("content-length") ?? "0");
-    if (Number.isFinite(length) && length > MAX_DOWNLOAD_BYTES) throw new Error(`Download exceeds ${MAX_DOWNLOAD_BYTES} bytes: ${url}`);
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > MAX_DOWNLOAD_BYTES) throw new Error(`Download exceeds ${MAX_DOWNLOAD_BYTES} bytes: ${url}`);
-    return bytes;
-  } catch (error) {
-    if (controller.signal.aborted) throw new Error(`Download timed out after ${timeoutMs}ms: ${url}`);
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function parseExpectedChecksum(text: string, asset: string): string {
-  const line = text.split(/\r?\n/).find(candidate => candidate.trim().endsWith(asset));
-  const checksum = line?.trim().split(/\s+/)[0]?.toLowerCase();
-  if (!checksum || !/^[a-f0-9]{64}$/.test(checksum)) throw new Error(`SHA256SUMS.txt has no valid entry for ${asset}`);
-  return checksum;
 }
 
 function binaryPath(): string {
@@ -68,61 +39,73 @@ function manifestPath(): string {
   return join(getConfigDir(), "bin", "tunnel-client-manifest.json");
 }
 
-export async function installTunnelClient(): Promise<string> {
+function assertTunnelClientVersion(executable: string): void {
+  const version = runChecked(executable, ["--version"], { timeout: 10_000 });
+  if (!version.stdout.includes(TUNNEL_VERSION) && !version.stderr.includes(TUNNEL_VERSION)) {
+    throw new Error(`Tunnel client must report version ${TUNNEL_VERSION}: ${executable}`);
+  }
+}
+
+function managedTunnelClientIsValid(executable: string, manifestFile: string): boolean {
+  if (!existsSync(executable) || !existsSync(manifestFile)) return false;
+  const manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as Partial<TunnelInstallManifest>;
+  if ((manifest.version !== 1 && manifest.version !== 2)
+    || manifest.tunnelClientVersion !== TUNNEL_VERSION
+    || typeof manifest.binarySha256 !== "string") return false;
+  const actual = sha256(readFileSync(executable));
+  if (manifest.binarySha256 !== actual) return false;
+  if (process.platform !== "win32" && (statSync(executable).mode & 0o111) === 0) {
+    throw new Error(`Existing tunnel-client is not executable: ${executable}`);
+  }
+  assertTunnelClientVersion(executable);
+  return true;
+}
+
+/**
+ * Provision the pinned OpenAI tunnel client from an explicitly supplied local file.
+ *
+ * CWC Personal never downloads executable code at runtime. Existing managed installations created
+ * by v4.1.0 remain valid when their recorded hash/version still match. New or replacement installs
+ * must provide a reviewed local tunnel-client binary, which is copied into CWC's private data area,
+ * version-checked and hash-recorded before use.
+ */
+export async function installTunnelClient(sourcePath?: string): Promise<string> {
   const executable = binaryPath();
   const manifestFile = manifestPath();
-  if (existsSync(executable) && existsSync(manifestFile)) {
-    const manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as Partial<TunnelInstallManifest>;
-    const actual = sha256(readFileSync(executable));
-    if (manifest.version === 1 && manifest.tunnelClientVersion === TUNNEL_VERSION && manifest.binarySha256 === actual) {
-      if (process.platform !== "win32" && (statSync(executable).mode & 0o111) === 0) {
-        throw new Error(`Existing tunnel-client is not executable: ${executable}`);
-      }
-      const version = runChecked(executable, ["--version"], { timeout: 10_000 });
-      if (!version.stdout.includes(TUNNEL_VERSION) && !version.stderr.includes(TUNNEL_VERSION)) {
-        throw new Error(`Existing tunnel-client did not report version ${TUNNEL_VERSION}`);
-      }
-      return executable;
-    }
-    throw new Error(`Existing tunnel-client failed integrity validation: ${executable}`);
+  if (managedTunnelClientIsValid(executable, manifestFile)) return executable;
+
+  if (!sourcePath?.trim()) {
+    throw new Error(
+      `Automatic tunnel-client download is disabled. Select a reviewed local tunnel-client v${TUNNEL_VERSION} binary.`,
+    );
   }
+
+  const source = resolve(sourcePath.trim());
+  if (!existsSync(source)) throw new Error(`Local tunnel-client does not exist: ${source}`);
+  const sourceStat = lstatSync(source);
+  if (!sourceStat.isFile()) throw new Error(`Local tunnel-client must be a regular file: ${source}`);
+  if (sourceStat.size < 1 || sourceStat.size > MAX_LOCAL_BINARY_BYTES) {
+    throw new Error(`Local tunnel-client has an invalid size: ${source}`);
+  }
+  const binary = readFileSync(source);
+
   if (existsSync(executable) || existsSync(manifestFile)) {
     rmSync(executable, { force: true });
     rmSync(manifestFile, { force: true });
   }
-
-  const asset = platformAsset();
-  const [archive, sums] = await Promise.all([
-    fetchBytes(`${RELEASE_BASE}/${asset}`),
-    fetchBytes(`${RELEASE_BASE}/SHA256SUMS.txt`),
-  ]);
-  const expected = parseExpectedChecksum(new TextDecoder().decode(sums), asset);
-  const archiveHash = sha256(archive);
-  if (archiveHash !== expected) throw new Error(`Checksum mismatch for ${asset}`);
-  const files = unzipSync(archive);
-  const expectedName = process.platform === "win32" ? "tunnel-client.exe" : "tunnel-client";
-  const entry = Object.entries(files).find(([name]) => basename(name) === expectedName);
-  if (!entry) throw new Error(`${asset} does not contain ${expectedName}`);
-  const binary = entry[1];
   mkdirSync(dirname(executable), { recursive: true, mode: 0o700 });
   atomicWriteFile(executable, binary);
   if (process.platform !== "win32") chmodSync(executable, 0o700);
-  let version: ReturnType<typeof runChecked>;
   try {
-    version = runChecked(executable, ["--version"], { timeout: 10_000 });
+    assertTunnelClientVersion(executable);
   } catch (error) {
     rmSync(executable, { force: true });
     throw error;
   }
-  if (!version.stdout.includes(TUNNEL_VERSION) && !version.stderr.includes(TUNNEL_VERSION)) {
-    rmSync(executable, { force: true });
-    throw new Error(`Installed tunnel-client did not report version ${TUNNEL_VERSION}`);
-  }
-  const manifest: TunnelInstallManifest = {
-    version: 1,
+  const manifest: LocalTunnelInstallManifest = {
+    version: 2,
     tunnelClientVersion: TUNNEL_VERSION,
-    asset,
-    archiveSha256: archiveHash,
+    source: "local",
     binarySha256: sha256(binary),
   };
   atomicWriteFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
