@@ -18,6 +18,7 @@
     "start": "bun run scripts/start-launcher.ts",
     "test": "bun test tests/*.test.ts",
     "audit": "bun audit",
+    "supply-chain:hooks": "bun run scripts/audit-install-hooks.ts",
     "check-version": "bun run scripts/check-version.ts",
     "typecheck": "bunx tsc --noEmit",
     "licenses": "bun run scripts/generate-third-party-notices.ts --include-launcher",
