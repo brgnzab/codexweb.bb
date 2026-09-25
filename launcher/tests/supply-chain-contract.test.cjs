@@ -18,11 +18,13 @@ test("root and launcher use committed Bun lockfiles and no workspace lifecycle h
   }
 });
 
-test("CI and release use frozen installs for both workspaces", () => {
+test("CI and release use frozen installs and the exact Node pin", () => {
   for (const workflow of ["ci.yml", "release.yml"]) {
     const source = read(repoRoot, ".github", "workflows", workflow);
     const matches = source.match(/bun install --frozen-lockfile/g) || [];
     assert.ok(matches.length >= 2, `${workflow} must freeze both root and launcher installs`);
+    assert.match(source, /actions\/setup-node@v6/);
+    assert.match(source, /node-version: "22\.23\.2"/);
   }
 });
 
@@ -39,6 +41,7 @@ test("recorded Windows build toolchain matches committed launcher lock", () => {
   const rootManifest = JSON.parse(read(repoRoot, "package.json"));
   assert.equal(rootManifest.packageManager, "bun@1.3.14");
   assert.equal(rootManifest.engines.bun, "1.3.14");
+  assert.equal(rootManifest.engines.node, "22.23.2");
 });
 
 test("supply-chain lifecycle inventory is committed and callable", () => {
