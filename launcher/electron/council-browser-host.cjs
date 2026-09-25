@@ -9,6 +9,14 @@ function createCouncilBrowserHostClass(LegacyBrowserHost) {
     constructor(options) {
       super(options);
       this.agentSurfaceRegistry = new AgentSurfaceRegistry({ maxSurfaces: 5 });
+      this.downloadBlocker = (event, item) => {
+        event.preventDefault();
+        let origin = "unknown";
+        try { origin = new URL(item?.getURL?.() || "").origin; } catch {}
+        this.logger?.warn?.("browser.download_blocked", { origin });
+      };
+      this.downloadSession = this.view?.webContents?.session ?? null;
+      this.downloadSession?.on?.("will-download", this.downloadBlocker);
       currentCouncilBrowserHost = this;
     }
 
@@ -120,6 +128,9 @@ function createCouncilBrowserHostClass(LegacyBrowserHost) {
     }
 
     async dispose(...args) {
+      if (this.downloadSession && this.downloadBlocker) this.downloadSession.removeListener?.("will-download", this.downloadBlocker);
+      this.downloadSession = null;
+      this.downloadBlocker = null;
       if (currentCouncilBrowserHost === this) currentCouncilBrowserHost = null;
       if (typeof super.dispose === "function") return await super.dispose(...args);
     }
