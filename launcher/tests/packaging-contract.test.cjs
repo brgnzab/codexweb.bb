@@ -12,9 +12,13 @@ const read = (...parts) => fs.readFileSync(path.join(...parts), "utf8");
 test("the public launcher command uses the hardened Electron Council bootstrap", () => {
   assert.equal(repositoryManifest.scripts.launcher, "bun run scripts/start-launcher.ts");
   assert.equal(repositoryManifest.scripts.launcher, repositoryManifest.scripts.app);
-  assert.equal(manifest.main, "electron/main-hardened.cjs");
+  assert.equal(manifest.main, "electron/main-dispatch.cjs");
+  const dispatch = read(launcherRoot, "electron", "main-dispatch.cjs");
+  assert.match(dispatch, /process\.argv\.includes\("--launcher-smoke-test"\)/);
+  assert.match(dispatch, /require\("\.\/main-hardened\.cjs"\)/);
   assert.equal(fs.existsSync(path.join(launcherRoot, "electron", "main-hardened.cjs")), true);
   assert.equal(fs.existsSync(path.join(launcherRoot, "electron", "main-council.cjs")), true);
+  assert.equal(fs.existsSync(path.join(launcherRoot, "electron", "smoke-main.cjs")), true);
 });
 
 test("launcher packages Windows x64 only with constrained NSIS settings", () => {
