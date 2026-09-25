@@ -53,11 +53,18 @@ class RuntimeHost extends legacy.RuntimeHost {
     }
   }
 
-  async setupCouncilMcp({ tunnelId = "", runtimeKey = "", replace = false } = {}) {
+  async setupCouncilMcp({ tunnelId = "", runtimeKey = "", tunnelClientPath = "", replace = false } = {}) {
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const reuseSavedCredentials = replace !== true && this.mcpCredentialsConfigured();
     if (!reuseSavedCredentials && !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) throw new Error("Tunnel ID must be tunnel_ followed by 32 lowercase hexadecimal characters");
     if (!reuseSavedCredentials && (typeof runtimeKey !== "string" || runtimeKey.trim().length < 20)) throw new Error("A Tunnels Read + Use runtime key is required");
+    if (!reuseSavedCredentials) {
+      if (typeof tunnelClientPath !== "string" || !path.isAbsolute(tunnelClientPath)) {
+        throw new Error("Fresh Council Tunnel setup requires an absolute local tunnel-client path");
+      }
+      const clientStat = fs.lstatSync(tunnelClientPath);
+      if (!clientStat.isFile()) throw new Error(`Tunnel client must be a regular local file: ${tunnelClientPath}`);
+    }
 
     // Rollback owns only codexweb's config. No Codex file is captured or restored.
     const configPath = this.supervisor.configPath;
@@ -72,7 +79,7 @@ class RuntimeHost extends legacy.RuntimeHost {
       try { fs.chmodSync(secretsDir, 0o700); } catch {}
       keyPath = path.join(secretsDir, `runtime-key-${randomBytes(16).toString("hex")}.tmp`);
       fs.writeFileSync(keyPath, runtimeKey.trim(), { flag: "wx", mode: 0o600 });
-      args.push("--tunnel-id", tunnelId, "--runtime-key-file", keyPath);
+      args.push("--tunnel-id", tunnelId, "--runtime-key-file", keyPath, "--tunnel-client-path", tunnelClientPath);
     }
 
     this.lifecycleOperation = "council-setup";
