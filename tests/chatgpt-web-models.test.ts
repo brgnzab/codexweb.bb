@@ -9,19 +9,7 @@ import {
   resolveChatGptWebContextLimits,
   resolveChatGptWebTransportLimits,
 } from "../src/chatgpt-web-models";
-import { defaultConfig } from "../src/config";
-import { routeChatGptWebRequest } from "../src/server";
-import type { CodexParsedRequest } from "../src/types";
-
-function parsed(modelId: string, reasoning = "medium"): CodexParsedRequest {
-  return {
-    modelId,
-    context: { messages: [] },
-    stream: false,
-    options: { reasoning },
-    _rawBody: { model: modelId, reasoning: { effort: reasoning } },
-  };
-}
+import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
 
 describe("fixed ChatGPT Web model routes", () => {
   const plus = { solAvailable: true, proAvailable: false };
@@ -137,34 +125,47 @@ describe("fixed ChatGPT Web model routes", () => {
     });
   });
 
-  test("binds the selected model authoritatively and ignores a conflicting request effort", () => {
-    const request = parsed("chatgpt-web/high", "low");
-    const rawSnapshot = structuredClone(request._rawBody);
-    const route = routeChatGptWebRequest(request, defaultConfig("browser-only"));
+  test("binds the selected model route to the current adapter mode", () => {
+    const route = requireChatGptWebModelRoute("chatgpt-web/high", plus);
+    const mode = resolveChatGptWebModelMode(route.backendModel, route.adapterEffort, {
+      localToolsEnabled: true,
+      ...plus,
+    });
 
     expect(route.slug).toBe("chatgpt-web/high");
-    expect(request.modelId).toBe(CHATGPT_WEB_BACKEND_MODEL);
-    expect(request.options.reasoning).toBe("high");
-    expect(request._rawBody).toEqual(rawSnapshot);
+    expect(route.backendModel).toBe(CHATGPT_WEB_BACKEND_MODEL);
+    expect(route.adapterEffort).toBe("high");
+    expect(mode.displayLabel).toBe("High");
+    expect(mode.effort).toBe("high");
+    expect(mode.localTools).toBe(true);
   });
 
-  test("binds the Pro model to the browser Pro effort and fails closed for unknown routes", () => {
-    const config = defaultConfig("full");
-    config.proAvailable = true;
-    const request = parsed("chatgpt-web/pro", "low");
-    expect(routeChatGptWebRequest(request, config).adapterEffort).toBe("max");
-    expect(request.options.reasoning).toBe("max");
-    expect(() => routeChatGptWebRequest(parsed("chatgpt-web/not-enabled"), config))
+  test("binds the Pro route to browser Pro mode and fails closed for unknown routes", () => {
+    const route = requireChatGptWebModelRoute("chatgpt-web/pro", pro);
+    const mode = resolveChatGptWebModelMode(route.backendModel, route.adapterEffort, {
+      localToolsEnabled: true,
+      ...pro,
+    });
+
+    expect(route.adapterEffort).toBe("max");
+    expect(mode.displayLabel).toBe("Pro");
+    expect(mode.effort).toBe("max");
+    expect(mode.localTools).toBe(false);
+    expect(() => requireChatGptWebModelRoute("chatgpt-web/not-enabled", pro))
       .toThrow("model is not enabled");
   });
 
-  test("binds the Luna route to Luna without a selectable effort", () => {
-    const config = defaultConfig("browser-only");
-    config.solAvailable = false;
-    const request = parsed("chatgpt-web/luna", "high");
-    const route = routeChatGptWebRequest(request, config);
+  test("binds the Luna route directly to the current Luna adapter mode", () => {
+    const free = { solAvailable: false, proAvailable: false };
+    const route = requireChatGptWebModelRoute("chatgpt-web/luna", free);
+    const mode = resolveChatGptWebModelMode(route.backendModel, route.adapterEffort, {
+      localToolsEnabled: true,
+      ...free,
+    });
+
     expect(route).toBe(CHATGPT_WEB_LUNA_MODEL_ROUTE);
-    expect(request.modelId).toBe(CHATGPT_WEB_LUNA_BACKEND_MODEL);
-    expect(request.options.reasoning).toBe("low");
+    expect(mode.modelId).toBe(CHATGPT_WEB_LUNA_BACKEND_MODEL);
+    expect(mode.effort).toBe("low");
+    expect(mode.displayLabel).toBe("Luna");
   });
 });
