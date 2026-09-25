@@ -65,7 +65,7 @@ export async function setupCouncil(options: CouncilSetupOptions): Promise<Counci
         alias: "codexweb-council",
       })
     : createTunnelConfig({
-        binaryPath: reusableTunnel!.binaryPath,
+        binaryPath: await installTunnelClient(),
         tunnelId: reusableTunnel!.tunnelId,
         runtimeKeyFile: reusableTunnel!.runtimeKeyFile,
         profileName: "codexweb-council",
