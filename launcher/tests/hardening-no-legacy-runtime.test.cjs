@@ -25,18 +25,32 @@ test("detached non-Council runtime entrypoints stay removed", () => {
     "src/adapters/chatgpt-web/mcp-server.ts",
     "src/adapters/chatgpt-web/turn-broker.ts",
     "src/adapters/chatgpt-web/turn-execution.ts",
-    "src/adapters/chatgpt-web/environment.ts",
     "src/adapters/chatgpt-web/thread-environment.ts",
     "src/adapters/chatgpt-web/usage.ts",
-    "src/responses/parser.ts",
-    "src/responses/reasoning-envelope.ts",
-    "src/responses/schema.ts",
-    "src/responses/state.ts",
     "scripts/smoke-codex-catalog.ts",
     "launcher/src/council-update.css",
   ]) {
     assert.equal(fs.existsSync(path.join(repoRoot, relative)), false, `${relative} must stay removed`);
   }
+});
+
+test("active browser-helper response and environment dependencies stay present", () => {
+  for (const relative of [
+    "src/adapters/chatgpt-web/environment.ts",
+    "src/responses/parser.ts",
+    "src/responses/reasoning-envelope.ts",
+    "src/responses/schema.ts",
+    "src/responses/state.ts",
+  ]) {
+    assert.equal(fs.existsSync(path.join(repoRoot, relative)), true, `${relative} is a current runtime dependency`);
+  }
+  const parser = read(repoRoot, "src", "responses", "parser.ts");
+  assert.match(parser, /responsesRequestSchema/);
+  assert.match(parser, /previousResponseReplayPrefixLength/);
+  assert.match(parser, /decodeReasoningEnvelope/);
+  const environment = read(repoRoot, "src", "adapters", "chatgpt-web", "environment.ts");
+  assert.match(environment, /extractChatGptTurnUserRevision/);
+  assert.match(environment, /ChatGptTurnEnvironment/);
 });
 
 test("current CLI exposes only Council runtime commands", () => {

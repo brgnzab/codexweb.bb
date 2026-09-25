@@ -110,14 +110,16 @@ Do not reuse an advisory count from an older CWC revision. Record every advisory
 
 Electron is a direct runtime dependency and therefore its advisories require application-specific reachability review rather than a blanket "build-only" classification.
 
-For popup/window-sandbox advisories, verify the exact advisory's documented affected versions and workaround against the current source. Current CWC boundaries that must be checked include:
+For popup/window-sandbox advisories, verify the exact advisory's documented affected versions and workaround against the **production entrypoint** `launcher/electron/main-hardened.cjs`, not merely the inherited base browser-host source. Current CWC boundaries that must be checked include:
 
-- the local main renderer is sandboxed with `contextIsolation: true`, `nodeIntegration: false`, and installs `setWindowOpenHandler` that denies creation and routes external URLs through the main process;
+- the local main renderer is sandboxed with `contextIsolation: true`, `nodeIntegration: false`, and installs `setWindowOpenHandler` that denies child-window creation;
 - managed ChatGPT turn tabs are sandboxed and their `setWindowOpenHandler` always returns `deny` after either blocking authentication or forwarding ordinary HTTP(S) links externally;
-- the managed ChatGPT home surface allows a child window only for the explicit authentication-provider allowlist; every other popup is denied;
-- the authentication surface installs its own `setWindowOpenHandler` and denies further child-window creation.
+- the production ChatGPT home surface overrides the inherited popup handler before `main-council.cjs` starts and returns `deny` for **every** window-open request, including authentication requests;
+- an allowlisted authentication request is redirected into a fresh launcher-owned `WebContentsView` with the same persistent ChatGPT partition, `contextIsolation: true`, `nodeIntegration: false`, and `sandbox: true`; popup-provided `options.webContents` is not reused;
+- authentication navigation is restricted to the explicit identity-provider allowlist plus the HTTPS `chatgpt.com/api/auth/` callback path;
+- the authentication surface installs its own `setWindowOpenHandler`; nested authentication requests are navigated in that same controlled surface and child-window creation still returns `deny`.
 
-Codex must report the exact Electron GHSA IDs returned by `bun audit`. If an advisory is mitigated only when all untrusted popups are denied, do not assume the authentication allowlist is sufficient: explain why the constrained authentication surface does or does not satisfy the advisory's official workaround. If a direct Electron high/critical advisory is materially reachable or has no applicable app-side workaround, CWC-012 fails and an Electron upgrade becomes required.
+Codex must report the exact Electron GHSA IDs returned by `bun audit`. For `GHSA-9f4c-93c8-jc8g` and `GHSA-hq2x-r82h-9wj4`, independently verify that the production wrapper actually satisfies the upstream deny/constrain workaround at runtime. Do not accept the mitigation merely because a static test says so. If either direct High advisory remains materially reachable, or another direct High/Critical Electron advisory has no applicable app-side workaround, CWC-012 fails and Electron must be upgraded to a patched release; the previous QA identified `41.10.4` as the minimum version covering both known High popup advisories.
 
 ## 6. Lockfile and build integrity checks
 

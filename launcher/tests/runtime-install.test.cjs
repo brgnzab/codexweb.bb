@@ -40,11 +40,11 @@ test("packaged runtime is installed once into a durable versioned directory", ()
       app,
       sourceRoot: root,
       installedRuntimeRoot: installed,
-      args: ["serve"],
+      args: ["mcp"],
     });
     assert.equal(invocation.cwd, installed);
     assert.equal(invocation.args[0], path.join(installed, "app", "cli.js"));
-    assert.equal(invocation.args[1], "serve");
+    assert.equal(invocation.args[1], "mcp");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

@@ -9,6 +9,7 @@ const read = (...parts) => fs.readFileSync(path.join(...parts), "utf8");
 
 test("launcher manifest exposes Windows packaging only", () => {
   const manifest = JSON.parse(read(launcherRoot, "package.json"));
+  assert.equal(manifest.main, "electron/main-hardened.cjs");
   assert.equal(manifest.scripts.package, "bun run package:win");
   assert.equal(typeof manifest.scripts["package:win"], "string");
   assert.equal(manifest.scripts["package:mac"], undefined);
@@ -42,6 +43,7 @@ test("product CI and release build only Windows x64 artifacts", () => {
 test("shared current runtime files are intentionally preserved", () => {
   for (const relative of [
     "src/tunnel.ts",
+    "launcher/electron/main-hardened.cjs",
     "launcher/electron/main-council.cjs",
     "launcher/electron/runtime.cjs",
     "launcher/electron/runtime-supervisor.cjs",

@@ -5,7 +5,7 @@
   "description": "Desktop control center for CodexWeb Council",
   "author": "miuuyy / Nolane-x",
   "type": "module",
-  "main": "electron/main-council.cjs",
+  "main": "electron/main-hardened.cjs",
   "scripts": {
     "dev": "bun run scripts/dev.cjs",
     "typecheck": "tsc --noEmit",

@@ -9,10 +9,12 @@ const manifest = JSON.parse(fs.readFileSync(path.join(launcherRoot, "package.jso
 const repositoryManifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, "package.json"), "utf8"));
 const read = (...parts) => fs.readFileSync(path.join(...parts), "utf8");
 
-test("the public launcher command uses the Electron Council bootstrap", () => {
+test("the public launcher command uses the hardened Electron Council bootstrap", () => {
   assert.equal(repositoryManifest.scripts.launcher, "bun run scripts/start-launcher.ts");
   assert.equal(repositoryManifest.scripts.launcher, repositoryManifest.scripts.app);
-  assert.equal(manifest.main, "electron/main-council.cjs");
+  assert.equal(manifest.main, "electron/main-hardened.cjs");
+  assert.equal(fs.existsSync(path.join(launcherRoot, "electron", "main-hardened.cjs")), true);
+  assert.equal(fs.existsSync(path.join(launcherRoot, "electron", "main-council.cjs")), true);
 });
 
 test("launcher packages Windows x64 only with constrained NSIS settings", () => {
@@ -26,6 +28,7 @@ test("launcher packages Windows x64 only with constrained NSIS settings", () => 
   assert.equal(manifest.build.nsis.perMachine, false);
   assert.equal(manifest.build.nsis.allowElevation, false);
   assert.equal(manifest.build.nsis.runAfterFinish, false);
+  assert.ok(manifest.build.files.includes("electron/**"), "hardened Electron entrypoint must be packaged");
 });
 
 test("packager accepts only Windows x64 and never publishes automatically", () => {

@@ -9,11 +9,25 @@ The following inherited runtime surfaces are intentionally no longer part of CWC
 - legacy terminal CLI dispatcher and its `serve`, standalone `setup`, `doctor`, service and tunnel-service branches;
 - Codex route/config integration and native Codex model-catalog/passthrough support;
 - standalone browser-login workflow (only the verification-marker path helper remains because the packaged browser helper imports it);
-- legacy Responses HTTP proxy, SSE bridge, request parser/state/schema/reasoning-envelope path;
-- old ChatGPT Responses adapter orchestration: adapter entrypoint, adapter MCP server, turn broker/execution, request environment/thread projection and adapter usage estimator;
+- retired Responses HTTP server/SSE bridge entrypoints;
+- old ChatGPT Responses adapter orchestration entrypoint, adapter MCP server, turn broker/execution path, thread-environment projection and adapter usage estimator;
 - retired Electron `main.cjs`, legacy launcher contracts, updater stylesheet, and prior installer/distribution entrypoints.
 
 The current runtime CLI is limited to `--version`, `--help`, `council-setup`, `mcp`, and the `--home` override. Source `start` launches the Electron Council application.
+
+## Retained active Responses and ChatGPT environment modules
+
+The following v4.1.0 modules are **CURRENT DEPENDENCIES** and must not be classified as detached legacy code:
+
+- `src/responses/parser.ts`
+- `src/responses/reasoning-envelope.ts`
+- `src/responses/schema.ts`
+- `src/responses/state.ts`
+- `src/adapters/chatgpt-web/environment.ts`
+
+The active response parser composes the current schema, replay state and reasoning-envelope helpers. Current ChatGPT Web prompt/runtime tests and browser-helper behavior also depend on the trusted environment projection. Removing these modules breaks root typechecking/tests and the packaged runtime build, so CWC-012 restores the exact locked-v4.1.0 blobs rather than weakening those consumers.
+
+This retention does **not** restore the retired standalone Responses HTTP server, SSE bridge, adapter MCP server, old adapter entrypoint, turn broker/execution path, `thread-environment.ts`, `usage.ts`, or the legacy service/CLI surfaces.
 
 ## Retained legacy-named launcher bases
 
@@ -41,4 +55,4 @@ The remaining browser-worker/model/prompt/rolling-checkpoint modules are retaine
 
 ## CWC-010 boundary
 
-This gate is source cleanup, not an untested rewrite of process lifecycle primitives. The retained legacy-named bases above are active dependencies and are explicitly documented rather than falsely classified as dead code. Later independent regression/runtime gates must test them before any deeper extraction is attempted.
+This gate is source cleanup, not an untested rewrite of current runtime primitives. Retained modules above have demonstrated active dependencies and are documented rather than falsely classified as dead code. Independent regression/runtime gates must test them before any deeper extraction is attempted.
