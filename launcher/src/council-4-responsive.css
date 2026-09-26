@@ -16,4 +16,4 @@
 .connection-list article.status-healthy > i, .council-statusbar button.status-healthy > i { background: #4e9d7d; opacity: .72; box-shadow: none; }
 .connection-list article.status-degraded, .connection-list article.status-blocked, .connection-list article.status-offline { background: linear-gradient(90deg, rgba(241,189,103,.055), transparent 42%); }
 .connection-list article.status-degraded > i { background: var(--c-warn); opacity: 1; box-shadow: 0 0 0 3px rgba(241,189,103,.08); }
-.connection-list article.status-blocked > i, .council-statusbar button.status-blocked > i, .connection-list article.status-offline > i { background: var(--c-danger); opacity: 1; box-shadow: 0 0 0 3px rgba(239,125,125,.08); }
+.connection-list article.status-blocked > i, .connection-list article.status-offline > i { background: var(--c-danger); opacity: 1; box-shadow: 0 0 0 3px rgba(239,125,125,.08); }
