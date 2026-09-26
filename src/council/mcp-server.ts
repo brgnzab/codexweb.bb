@@ -92,15 +92,43 @@ export function createCouncilMcpServer(store: CouncilStore, options: CouncilMcpS
   return server;
 }
 
+async function waitForStdioLifetime(): Promise<void> {
+  if (process.stdin.destroyed || process.stdin.readableEnded) return;
+  await new Promise<void>((resolve, reject) => {
+    function cleanup(): void {
+      process.stdin.off("end", done);
+      process.stdin.off("close", done);
+      process.stdin.off("error", fail);
+    }
+    function done(): void {
+      cleanup();
+      resolve();
+    }
+    function fail(error: Error): void {
+      cleanup();
+      reject(error);
+    }
+    process.stdin.once("end", done);
+    process.stdin.once("close", done);
+    process.stdin.once("error", fail);
+    process.stdin.resume();
+  });
+}
+
 export async function runCouncilMcpServer(options: { storePath?: string; store?: CouncilStore; wakeDelivery?: CouncilWakeDelivery; managedRuntime?: CouncilManagedRuntime; observations?: CouncilObservationStore; autonomy?: CouncilAutonomyKernel; memory?: CouncilMemoryIndex; execution?: CouncilExecutionControlPlane }): Promise<void> {
   const store = options.store ?? (options.storePath ? new CouncilStore(options.storePath) : undefined);
   if (!store) throw new Error("Council MCP requires a store or storePath");
-  await createCouncilMcpServer(store, {
+  const server = createCouncilMcpServer(store, {
     wakeDelivery: options.wakeDelivery,
     managedRuntime: options.managedRuntime,
     observations: options.observations,
     autonomy: options.autonomy,
     memory: options.memory,
     execution: options.execution,
-  }).connect(new StdioServerTransport());
+  });
+  await server.connect(new StdioServerTransport());
+  // The Secure MCP Tunnel keeps stdin open for the lifetime of the remote MCP session. Local-only
+  // launcher mode intentionally does the same with a private child pipe, so the exact same Council
+  // process owns the managed runtime and protected owner-control service in both configurations.
+  await waitForStdioLifetime();
 }
