@@ -9,6 +9,8 @@ const runRoot = path.resolve(process.env.CWC_LOCAL_QA_RUNTIME_DIR || path.join(p
 const coreHome = path.join(runRoot, "core");
 const launcherData = path.join(runRoot, "launcher");
 let child;
+const stdout = [];
+const stderr = [];
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -60,8 +62,6 @@ try {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  const stdout = [];
-  const stderr = [];
   child.stdout.on("data", chunk => stdout.push(chunk));
   child.stderr.on("data", chunk => stderr.push(chunk));
 
@@ -116,8 +116,8 @@ try {
     executionRuns: body.result.length,
   }));
 } catch (error) {
-  const stdoutText = child ? Buffer.concat(stdout ?? []).toString("utf8") : "";
-  const stderrText = child ? Buffer.concat(stderr ?? []).toString("utf8") : "";
+  const stdoutText = child ? Buffer.concat(stdout).toString("utf8") : "";
+  const stderrText = child ? Buffer.concat(stderr).toString("utf8") : "";
   if (stdoutText) console.error(stdoutText.slice(-4_000));
   if (stderrText) console.error(stderrText.slice(-4_000));
   throw error;
