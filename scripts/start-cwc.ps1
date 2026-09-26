@@ -18,7 +18,10 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Launcher = Join-Path $Root "launcher"
 
 function Resolve-Executable([string]$Name) {
-  $Command = Get-Command $Name -CommandType Application -ErrorAction Stop
+  $Command = Get-Command $Name -CommandType Application -ErrorAction Stop | Select-Object -First 1
+  if (-not $Command -or -not $Command.Source) {
+    throw "Required executable not found: $Name"
+  }
   return $Command.Source
 }
 
