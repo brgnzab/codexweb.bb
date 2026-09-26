@@ -20,6 +20,13 @@ const MCP_SDK_ELICITATION_URL_FRAGMENTS = [
   "?ses" + "sion=${sessionId}&elici" + "tation=${elicitationId}&cartId=${encodeURIComponent(cartId)}",
   "?ses" + "sion=${sessionId}&elici" + "tation=${elicitationId}",
 ];
+const FAST_URI_QUERY_FIXTURE = /\/node_modules\/fast-uri\/test\/(?:equal\.test\.js|security-normalization\.test\.js)$/;
+const FAST_URI_QUERY_FRAGMENTS = [
+  "?token=SECRET",
+  "?token=secret",
+  "?Token=Value",
+  "?token=value",
+];
 const PRIVATE_RUNTIME_PATH_SEGMENTS = new Set([
   ".cwc-data",
   ".codex-chatgpt-web",
@@ -29,8 +36,6 @@ const CHROMIUM_STATE_PATH_SEGMENTS = new Set([
   "webstorage",
   "local storage",
   "session storage",
-  "network",
-  "cache",
   "code cache",
   "gpucache",
   "dawncache",
@@ -38,6 +43,7 @@ const CHROMIUM_STATE_PATH_SEGMENTS = new Set([
   "indexeddb",
   "blob_storage",
 ]);
+const CONTEXTUAL_CHROMIUM_STATE_PATH_SEGMENTS = new Set(["network", "cache"]);
 const SENSITIVE_STATE_BASENAMES = new Set([
   "cookies",
   "cookies-journal",
@@ -74,12 +80,16 @@ export function forbiddenPublicPathReason(value: string): string | undefined {
   const lower = normalized.toLowerCase();
   const name = basename(lower);
   const segments = lower.split("/").filter(Boolean);
+  const dependencySource = segments.includes("node_modules") || segments.includes(".bun");
 
   if (/^\.env(?:\.|$)/i.test(name) && name !== ".env.example") return "environment file";
   if (/\.jsonl$/i.test(name) || /\.(?:log|pid|sock|key|pem|p12|pfx)$/i.test(name)) return "runtime/credential file type";
   if (/^storage-state(?:\.[^/]+)?\.json$/i.test(name)) return "browser storage state";
   if (segments.some(segment => PRIVATE_RUNTIME_PATH_SEGMENTS.has(segment))) return "private runtime state tree";
   if (segments.some(segment => CHROMIUM_STATE_PATH_SEGMENTS.has(segment))) return "browser profile state tree";
+  if (!dependencySource && segments.some(segment => CONTEXTUAL_CHROMIUM_STATE_PATH_SEGMENTS.has(segment))) {
+    return "browser profile state tree";
+  }
   if (SENSITIVE_STATE_BASENAMES.has(name)) return "browser/session/runtime state";
   if (!normalized.includes("/") && name === "config.json") return "runtime configuration";
   return undefined;
@@ -93,12 +103,20 @@ function scrubKnownFixtures(value: string): string {
 
 function scrubKnownVendorPathFixtures(value: string, displayPath: string): string {
   const normalized = `/${normalizePath(displayPath).toLowerCase()}`;
-  if (!MCP_SDK_ELICITATION_EXAMPLE.test(normalized)) return value;
-
   let scrubbed = value;
-  for (const fragment of MCP_SDK_ELICITATION_URL_FRAGMENTS) {
-    scrubbed = scrubbed.split(fragment).join("[known-mcp-sdk-elicitation-url-fixture]");
+
+  if (MCP_SDK_ELICITATION_EXAMPLE.test(normalized)) {
+    for (const fragment of MCP_SDK_ELICITATION_URL_FRAGMENTS) {
+      scrubbed = scrubbed.split(fragment).join("[known-mcp-sdk-elicitation-url-fixture]");
+    }
   }
+
+  if (FAST_URI_QUERY_FIXTURE.test(normalized)) {
+    for (const fragment of FAST_URI_QUERY_FRAGMENTS) {
+      scrubbed = scrubbed.split(fragment).join("[known-fast-uri-query-fixture]");
+    }
+  }
+
   return scrubbed;
 }
 
