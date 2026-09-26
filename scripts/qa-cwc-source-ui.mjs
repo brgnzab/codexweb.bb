@@ -96,19 +96,31 @@ async function inspectWorkLayout(width) {
     const split = document.querySelector(".work-split");
     const tasks = document.querySelector(".work-tasks");
     const autonomy = document.querySelector(".work-autonomy");
-    if (!split || !tasks || !autonomy) throw new Error("Work layout surfaces are missing");
+    const manager = document.querySelector(".manager-control");
+    const managerCopy = document.querySelector(".manager-control-copy");
+    const managerActions = document.querySelector(".manager-control-actions");
+    if (!split || !tasks || !autonomy || !manager || !managerCopy || !managerActions) throw new Error("Work layout surfaces are missing");
     const splitStyle = getComputedStyle(split);
+    const managerStyle = getComputedStyle(manager);
     const tasksRect = tasks.getBoundingClientRect();
     const autonomyRect = autonomy.getBoundingClientRect();
+    const managerRect = manager.getBoundingClientRect();
+    const managerCopyRect = managerCopy.getBoundingClientRect();
+    const managerActionsRect = managerActions.getBoundingClientRect();
     return {
       viewportWidth: innerWidth,
       gridTemplateColumns: splitStyle.gridTemplateColumns,
+      managerGridTemplateColumns: managerStyle.gridTemplateColumns,
       tasks: { x: tasksRect.x, y: tasksRect.y, width: tasksRect.width, height: tasksRect.height },
       autonomy: { x: autonomyRect.x, y: autonomyRect.y, width: autonomyRect.width, height: autonomyRect.height },
+      manager: { x: managerRect.x, y: managerRect.y, width: managerRect.width, height: managerRect.height },
+      managerCopy: { x: managerCopyRect.x, y: managerCopyRect.y, width: managerCopyRect.width, height: managerCopyRect.height },
+      managerActions: { x: managerActionsRect.x, y: managerActionsRect.y, width: managerActionsRect.width, height: managerActionsRect.height },
     };
   });
   assert(layout.tasks.width >= 280, `Work tasks column collapsed at requested width ${width}: ${layout.tasks.width}`);
-  assert(layout.autonomy.width >= 280, `Project Manager column collapsed at requested width ${width}: ${layout.autonomy.width}`);
+  assert(layout.autonomy.width >= 280, `Autonomy column collapsed at requested width ${width}: ${layout.autonomy.width}`);
+  assert(layout.managerCopy.width >= 240, `Project Manager copy collapsed at requested width ${width}: ${layout.managerCopy.width}`);
   if (layout.viewportWidth <= 1280) {
     assert(layout.autonomy.y >= layout.tasks.y + Math.min(100, layout.tasks.height / 4), `Work panes did not stack at viewport ${layout.viewportWidth}`);
   }
@@ -209,10 +221,15 @@ try {
   results.process.pageErrors = pageErrors;
   results.process.consoleErrors = consoleErrors;
 
+  results.process.closePreference = await page.evaluate(async () => {
+    const state = await window.codexWebLauncher.setPreference("keepRunningOnClose", false);
+    return state.keepRunningOnClose;
+  });
+  assert(results.process.closePreference === false, "isolated source profile did not accept keepRunningOnClose=false");
   await page.evaluate(() => window.codexWebLauncher.windowControl("close"));
   const exitDeadline = Date.now() + 15_000;
   while (child.exitCode === null && Date.now() < exitDeadline) await sleep(100);
-  assert(child.exitCode !== null, "source launcher did not exit after normal window close");
+  assert(child.exitCode !== null, "source launcher did not exit after normal window close with keepRunningOnClose=false");
   assert(child.exitCode === 0, `source launcher exited with ${child.exitCode}`);
 
   const launcherLogPath = path.join(launcherData, "logs", "launcher.jsonl");
