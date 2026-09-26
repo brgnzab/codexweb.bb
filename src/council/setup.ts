@@ -7,6 +7,7 @@ import {
   loadConfigForSetup,
   saveConfig,
   type AppConfig,
+  type RuntimeMode,
 } from "../config";
 import {
   createTunnelConfig,
@@ -21,10 +22,11 @@ export interface CouncilSetupOptions {
   tunnelId?: string;
   runtimeKeyFile?: string;
   tunnelClientPath?: string;
+  localOnly?: boolean;
 }
 
 export interface CouncilSetupResult {
-  mode: "full";
+  mode: RuntimeMode;
   appName: string;
   configPath: string;
   reusedCredentials: boolean;
@@ -41,55 +43,67 @@ export async function setupCouncil(options: CouncilSetupOptions): Promise<Counci
     throw new Error(`Launcher browser descriptor does not exist: ${descriptorPath}`);
   }
 
-  // Council may reuse the previous codexweb Tunnel credentials, but it intentionally never reads,
-  // restores, migrates, or mutates CODEX_HOME, ~/.codex/config.toml, model caches, or the legacy
-  // Codex integration journal. The old app config is only a credential source.
+  // Council local-only mode is the first-class default. A saved Council Tunnel remains reusable,
+  // and fresh Tunnel credentials may explicitly opt this installation into full mode. Council never
+  // reads or mutates CODEX_HOME, ~/.codex/config.toml, model caches, or the legacy integration journal.
   const existing = existingCodexWebConfig();
-  const previousCouncil = existing?.mode === "full" && existing.appName === COUNCIL_CONNECTOR_NAME ? existing : undefined;
-  const reusableTunnel = existing?.mode === "full" ? existing.tunnel : undefined;
+  const previousCouncil = existing?.appName === COUNCIL_CONNECTOR_NAME
+    && (existing.mode === "browser-only" || existing.mode === "full")
+    ? existing
+    : undefined;
+  const reusableTunnel = previousCouncil?.mode === "full" ? previousCouncil.tunnel : undefined;
   const freshCredentials = Boolean(options.tunnelId || options.runtimeKeyFile);
   if (freshCredentials && (!options.tunnelId || !options.runtimeKeyFile)) {
     throw new Error("Council setup requires both tunnelId and runtimeKeyFile when replacing tunnel credentials");
   }
-  if (!freshCredentials && !reusableTunnel) {
-    throw new Error("Council setup needs a Tunnel ID and Tunnels Read + Use runtime key for first-time setup");
+  if (options.localOnly && freshCredentials) {
+    throw new Error("Council local-only setup cannot also replace Tunnel credentials");
   }
 
-  const base = previousCouncil ?? defaultConfig("full");
-  const tunnel = freshCredentials
-    ? createTunnelConfig({
-        binaryPath: await installTunnelClient(options.tunnelClientPath),
-        tunnelId: options.tunnelId!,
-        runtimeKeyFile: installRuntimeKey(options.runtimeKeyFile!),
-        profileName: "codexweb-council",
-        alias: "codexweb-council",
-      })
-    : createTunnelConfig({
-        binaryPath: await installTunnelClient(),
-        tunnelId: reusableTunnel!.tunnelId,
-        runtimeKeyFile: reusableTunnel!.runtimeKeyFile,
-        profileName: "codexweb-council",
-        alias: "codexweb-council",
-      });
+  const useTunnel = options.localOnly !== true && (freshCredentials || Boolean(reusableTunnel));
+  const mode: RuntimeMode = useTunnel ? "full" : "browser-only";
+  const base = previousCouncil ?? defaultConfig(mode);
+  const tunnel = useTunnel
+    ? freshCredentials
+      ? createTunnelConfig({
+          binaryPath: await installTunnelClient(options.tunnelClientPath),
+          tunnelId: options.tunnelId!,
+          runtimeKeyFile: installRuntimeKey(options.runtimeKeyFile!),
+          profileName: "codexweb-council",
+          alias: "codexweb-council",
+        })
+      : createTunnelConfig({
+          binaryPath: await installTunnelClient(),
+          tunnelId: reusableTunnel!.tunnelId,
+          runtimeKeyFile: reusableTunnel!.runtimeKeyFile,
+          profileName: "codexweb-council",
+          alias: "codexweb-council",
+        })
+    : undefined;
 
-  const config: AppConfig = {
+  const common: AppConfig = {
     ...base,
     version: 3,
     releaseVersion: VERSION,
-    mode: "full",
+    mode,
     appName: COUNCIL_CONNECTOR_NAME,
     browserHost: "launcher",
     browserHostDescriptorPath: descriptorPath,
     runtimeCommand: currentRuntimeCommand(),
-    tunnel,
     acknowledgedUnofficialAt: base.acknowledgedUnofficialAt ?? new Date().toISOString(),
   };
+  const config: AppConfig = tunnel
+    ? { ...common, tunnel }
+    : (() => {
+        const { tunnel: _discardedTunnel, ...local } = common;
+        return local;
+      })();
   saveConfig(config);
   return {
-    mode: "full",
+    mode,
     appName: COUNCIL_CONNECTOR_NAME,
     configPath: getConfigPath(),
-    reusedCredentials: !freshCredentials,
+    reusedCredentials: useTunnel && !freshCredentials,
   };
 }
 
@@ -102,12 +116,20 @@ function takeOption(args: string[], name: string): string | undefined {
   return value;
 }
 
+function takeFlag(args: string[], name: string): boolean {
+  const index = args.indexOf(name);
+  if (index < 0) return false;
+  args.splice(index, 1);
+  return true;
+}
+
 export async function runCouncilSetupCommand(input: string[]): Promise<void> {
   const args = [...input];
   const descriptor = takeOption(args, "--browser-host-descriptor");
   const tunnelId = takeOption(args, "--tunnel-id");
   const runtimeKeyFile = takeOption(args, "--runtime-key-file");
   const tunnelClientPath = takeOption(args, "--tunnel-client-path");
+  const localOnly = takeFlag(args, "--local-only");
   if (args.length > 0) throw new Error(`Unknown Council setup arguments: ${args.join(" ")}`);
   if (!descriptor) throw new Error("council-setup requires --browser-host-descriptor");
   const result = await setupCouncil({
@@ -115,6 +137,7 @@ export async function runCouncilSetupCommand(input: string[]): Promise<void> {
     ...(tunnelId ? { tunnelId } : {}),
     ...(runtimeKeyFile ? { runtimeKeyFile } : {}),
     ...(tunnelClientPath ? { tunnelClientPath } : {}),
+    ...(localOnly ? { localOnly: true } : {}),
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
