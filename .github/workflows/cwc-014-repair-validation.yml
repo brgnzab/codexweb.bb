@@ -23,16 +23,19 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      - name: Refresh root lockfile for exact security overrides
+      - name: Refresh exact security lockfile resolutions
         shell: pwsh
         run: |
           bun install --lockfile-only
-          git diff -- bun.lock
+          Push-Location launcher
+          bun install --lockfile-only
+          Pop-Location
+          git diff -- bun.lock launcher/bun.lock
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add bun.lock
+          git add bun.lock launcher/bun.lock
           if (-not (git diff --cached --quiet)) {
-            git commit -m "chore: refresh audited security lockfile"
+            git commit -m "chore: refresh audited launcher security lockfile"
             git push origin HEAD:cwc-personal
           }
           Write-Host "VALIDATED_HEAD=$(git rev-parse HEAD)"
