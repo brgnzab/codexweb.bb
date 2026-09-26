@@ -72,8 +72,9 @@ transport, or returns a fabricated success.
 ### Login-state isolation
 
 The launcher keeps ChatGPT login, identity-provider navigation, and model turns in one private
-Electron partition. Allowed login popups are adopted into an in-launcher `WebContentsView` that
-shares that partition; unrelated external links remain outside it. A visible composer alone is not
+Electron partition. Allowed identity-provider popup requests are denied as popup-owned WebContents
+and recreated inside a fresh launcher-owned sandboxed `WebContentsView` that shares the private
+partition; unrelated external links remain outside it. A visible composer alone is not
 authentication evidence: the launcher also requires a valid server session and an exact Temporary
 Chat URL before setup can continue. No cookies, local storage, or browser profile are copied from an
 external browser.
