@@ -1,6 +1,8 @@
 import { createInterface } from "node:readline";
 import { stdin, stderr, stdout } from "node:process";
 import type { CodexProviderConfig } from "../../types";
+import { PlaywrightCouncilChatDriver } from "../../council/playwright-council-driver";
+import type { CouncilExecutionObservation, CouncilPromptAttachment } from "../../council/browser-transport";
 import { ChatGptBrowserWorker, closeChatGptBrowserWorkers, type BrowserTurn } from "./browser-worker";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import type { ChatGptWebCapabilities } from "./model";
@@ -48,8 +50,25 @@ interface SmokeMessage {
   config: VerifyMessage["config"];
 }
 
+interface CouncilMessage {
+  type: "council";
+  id: string;
+  operation: "create" | "resume" | "focus" | "capture";
+  config: { browserHostDescriptorPath: string };
+  input: {
+    surfaceId: string;
+    conversationUrl?: string;
+    prompt?: string;
+    attachments?: Array<{
+      name: string;
+      mimeType: CouncilPromptAttachment["mimeType"];
+      base64: string;
+    }>;
+  };
+}
+
 type MaintenanceMessage = VerifyMessage | InspectMessage | SmokeMessage;
-type InputMessage = RunMessage | MaintenanceMessage | { type: "abort"; id: string } | { type: "shutdown" };
+type InputMessage = RunMessage | MaintenanceMessage | CouncilMessage | { type: "abort"; id: string } | { type: "shutdown" };
 
 let outputFailure: Error | undefined;
 const handleOutputFailure = (error: Error): void => {
@@ -172,6 +191,91 @@ async function run(message: RunMessage): Promise<void> {
   }
 }
 
+function councilAttachments(message: CouncilMessage): CouncilPromptAttachment[] | undefined {
+  if (message.input.attachments === undefined) return undefined;
+  if (!Array.isArray(message.input.attachments) || message.input.attachments.length > 20) throw new Error("Council browser helper attachments are invalid");
+  return message.input.attachments.map(file => {
+    if (!file || typeof file !== "object"
+      || typeof file.name !== "string"
+      || !file.name.trim()
+      || file.name.length > 240
+      || !["image/png", "image/jpeg", "image/webp"].includes(file.mimeType)
+      || typeof file.base64 !== "string") {
+      throw new Error("Council browser helper attachment is invalid");
+    }
+    const buffer = Buffer.from(file.base64, "base64");
+    if (buffer.length === 0) throw new Error("Council browser helper attachment is empty");
+    return { name: file.name, mimeType: file.mimeType, buffer };
+  });
+}
+
+async function runCouncil(message: CouncilMessage): Promise<void> {
+  if (!/^[A-Za-z0-9_-]{6,128}$/.test(message.id)) throw new Error("Council browser helper operation identity is invalid");
+  if (abortControllers.has(message.id)) throw new Error(`Council browser helper operation already exists: ${message.id}`);
+  const descriptorPath = message.config?.browserHostDescriptorPath?.trim();
+  if (!descriptorPath) throw new Error("Council browser helper descriptor path is invalid");
+  if (!/^[A-Za-z0-9_-]{32}$/.test(message.input?.surfaceId ?? "")) throw new Error("Council browser helper surface identity is invalid");
+  if (!["create", "resume", "focus", "capture"].includes(message.operation)) throw new Error("Council browser helper operation is invalid");
+
+  const abortController = new AbortController();
+  abortControllers.set(message.id, abortController);
+  const driver = new PlaywrightCouncilChatDriver(descriptorPath);
+  const onExecution = (observation: CouncilExecutionObservation) => writeProtocol({ type: "council-event", id: message.id, observation });
+  try {
+    let value: unknown;
+    if (message.operation === "create") {
+      if (typeof message.input.prompt !== "string") throw new Error("Council browser helper create prompt is invalid");
+      value = await driver.create({
+        surfaceId: message.input.surfaceId,
+        prompt: message.input.prompt,
+        attachments: councilAttachments(message),
+        signal: abortController.signal,
+        onExecution,
+      });
+    } else if (message.operation === "resume") {
+      if (typeof message.input.prompt !== "string" || typeof message.input.conversationUrl !== "string") throw new Error("Council browser helper resume input is invalid");
+      value = await driver.resume({
+        surfaceId: message.input.surfaceId,
+        conversationUrl: message.input.conversationUrl,
+        prompt: message.input.prompt,
+        attachments: councilAttachments(message),
+        signal: abortController.signal,
+        onExecution,
+      });
+    } else if (message.operation === "focus") {
+      if (typeof message.input.conversationUrl !== "string") throw new Error("Council browser helper focus input is invalid");
+      value = await driver.focus!({
+        surfaceId: message.input.surfaceId,
+        conversationUrl: message.input.conversationUrl,
+        signal: abortController.signal,
+      });
+    } else {
+      if (typeof message.input.conversationUrl !== "string") throw new Error("Council browser helper capture input is invalid");
+      const captured = await driver.capture!({
+        surfaceId: message.input.surfaceId,
+        conversationUrl: message.input.conversationUrl,
+        signal: abortController.signal,
+      });
+      value = {
+        pngBase64: captured.png.toString("base64"),
+        conversationUrl: captured.conversationUrl,
+        health: captured.health,
+        ...(captured.note ? { note: captured.note } : {}),
+      };
+    }
+    writeProtocol({ type: "council-result", id: message.id, value });
+  } catch (error) {
+    writeProtocol({
+      type: "council-error",
+      id: message.id,
+      name: error instanceof Error ? error.name : "Error",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    abortControllers.delete(message.id);
+  }
+}
+
 async function verify(message: VerifyMessage): Promise<void> {
   try {
     const selected = await maintenanceWorker(message).verifyConnector();
@@ -247,6 +351,13 @@ input.on("line", line => {
     void maintain(message).catch(error => writeProtocol({
       type: "error",
       id: message.id,
+      message: error instanceof Error ? error.message : String(error),
+    }));
+  } else if (message.type === "council") {
+    void runCouncil(message).catch(error => writeProtocol({
+      type: "council-error",
+      id: message.id,
+      name: error instanceof Error ? error.name : "Error",
       message: error instanceof Error ? error.message : String(error),
     }));
   } else {
