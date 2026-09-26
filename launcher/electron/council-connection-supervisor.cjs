@@ -1,5 +1,7 @@
 const { randomUUID } = require("node:crypto");
+const fs = require("node:fs");
 const { onCouncilRuntimeLiveChanged } = require("./council-runtime-evidence.cjs");
+const { ownerDescriptorPath } = require("./council-owner-client.cjs");
 
 const DEFAULT_PORT = 17_842;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
@@ -144,6 +146,11 @@ function managedProjectFromState(sharedState) {
 class CouncilConnectionSupervisor {
   constructor(options = {}) {
     this.client = options.client || createCouncilSyncClient(options.clientOptions);
+    this.runtimeAvailable = typeof options.runtimeAvailable === "function"
+      ? options.runtimeAvailable
+      : options.client
+        ? () => true
+        : () => fs.existsSync(ownerDescriptorPath());
     this.capabilitiesProvider = options.capabilities;
     this.subscribeCapabilityChanges = typeof options.subscribeCapabilityChanges === "function"
       ? options.subscribeCapabilityChanges
@@ -157,6 +164,7 @@ class CouncilConnectionSupervisor {
     this.retryMs = Number.isFinite(options.retryMs) ? Math.max(100, Math.trunc(options.retryMs)) : DEFAULT_RETRY_MS;
     this.running = false;
     this.abortController = null;
+    this.runtimeUnavailable = false;
     this.runtime = {
       controlPlane: { state: "connecting" },
       projection: { syncState: "idle" },
@@ -197,6 +205,7 @@ class CouncilConnectionSupervisor {
     const value = validateSnapshotEnvelope(envelope);
     const observedAt = this.now();
     const staleSinceMs = this.staleSinceMs;
+    this.runtimeUnavailable = false;
     this.runtime = {
       controlPlane: { state: "connected" },
       projection: {
@@ -218,7 +227,41 @@ class CouncilConnectionSupervisor {
     return this.snapshot();
   }
 
+  markUnavailable() {
+    if (this.runtimeUnavailable) return this.snapshot();
+    this.runtimeUnavailable = true;
+    const reason = safeReason("CAPABILITY_UNAVAILABLE", true);
+    const previous = this.runtime.projection;
+    if ((previous.syncState === "live" || previous.syncState === "stale") && previous.state) {
+      if (this.staleSinceMs === null) this.staleSinceMs = this.now();
+      this.runtime = {
+        ...this.runtime,
+        controlPlane: { state: "offline", reason },
+        projection: {
+          syncState: "stale",
+          state: previous.state,
+          cursor: previous.cursor,
+          lastSyncedAt: previous.lastSyncedAt,
+          reason,
+        },
+        capabilities: normalizeCapabilities(this.capabilitiesProvider),
+      };
+    } else {
+      this.runtime = {
+        ...this.runtime,
+        controlPlane: { state: "offline", reason },
+        projection: { syncState: "idle" },
+        managedProject: { state: "unattached", reason: safeReason("PROJECT_UNATTACHED", false) },
+        capabilities: normalizeCapabilities(this.capabilitiesProvider),
+      };
+      this.staleSinceMs = null;
+    }
+    this.emit();
+    return this.snapshot();
+  }
+
   markFailure(code) {
+    this.runtimeUnavailable = false;
     const reason = safeReason(code, true);
     const previous = this.runtime.projection;
     if ((previous.syncState === "live" || previous.syncState === "stale") && previous.state) {
@@ -280,13 +323,21 @@ class CouncilConnectionSupervisor {
   }
 
   async run(signal) {
-    await this.hydrateOnce(signal);
     while (!signal.aborted) {
+      let available = false;
+      try { available = this.runtimeAvailable() === true; }
+      catch { available = false; }
+      if (!available) {
+        this.markUnavailable();
+        await this.sleep(this.retryMs, signal);
+        continue;
+      }
+      this.runtimeUnavailable = false;
       const projection = this.runtime.projection;
       const cursor = projection.syncState === "live" || projection.syncState === "stale" ? projection.cursor : undefined;
       if (!cursor || typeof this.client.next !== "function") {
-        await this.sleep(this.retryMs, signal);
-        if (!signal.aborted) await this.hydrateOnce(signal);
+        await this.hydrateOnce(signal);
+        if (!signal.aborted && this.runtime.projection.syncState !== "live") await this.sleep(this.retryMs, signal);
         continue;
       }
       try {
