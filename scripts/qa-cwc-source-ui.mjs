@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chromium } from "playwright-core";
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -143,14 +143,16 @@ try {
   child.stdout.pipe(stdout);
   child.stderr.pipe(stderr);
 
-  const devToolsPortPath = path.join(launcherData, "DevToolsActivePort");
-  await waitForFile(devToolsPortPath);
-  const [portLine] = fs.readFileSync(devToolsPortPath, "utf8").trim().split(/\r?\n/);
-  const port = Number(portLine);
-  assert(Number.isInteger(port) && port > 0, `invalid Electron DevTools port: ${portLine}`);
-  results.process.cdpPort = port;
+  const descriptorPath = path.join(coreHome, "runtime", "launcher-browser.json");
+  await waitForFile(descriptorPath);
+  const descriptor = JSON.parse(fs.readFileSync(descriptorPath, "utf8"));
+  assert(descriptor?.version === 1 && descriptor?.kind === "codex-web-gpt-launcher", "invalid Council browser descriptor");
+  const endpoint = new URL(descriptor.endpoint);
+  assert(endpoint.protocol === "http:" && endpoint.hostname === "127.0.0.1" && endpoint.port, `invalid loopback CDP endpoint: ${descriptor.endpoint}`);
+  results.process.browserDescriptor = path.relative(runRoot, descriptorPath);
+  results.process.cdpEndpoint = endpoint.origin;
 
-  browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  browser = await chromium.connectOverCDP(endpoint.origin, { timeout: 15_000 });
   page = await waitForRenderer();
   page.on("pageerror", error => pageErrors.push(error.message));
   page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
@@ -236,11 +238,7 @@ try {
   try { await cdp?.detach(); } catch {}
   try { await browser?.close(); } catch {}
   if (child && child.exitCode === null) {
-    try { child.kill("SIGTERM"); } catch {}
-    await sleep(1_000);
-    if (child.exitCode === null) {
-      try { spawn("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true }); } catch {}
-    }
+    try { spawnSync("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore", timeout: 10_000 }); } catch {}
   }
   stdout.end();
   stderr.end();
