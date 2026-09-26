@@ -15,6 +15,22 @@ const SAFE_FIXTURES = [
   "Bearer chatgpt-session-token",
 ];
 const KNOWN_VENDOR_URL_FIXTURE_PACKAGES = ["@mixmark-io/domino", "zod", "fast-uri"];
+const PRIVATE_RUNTIME_PATH_SEGMENTS = new Set([
+  ".cwc-data",
+  ".codex-chatgpt-web",
+  ".launcher-runtime",
+]);
+const CHROMIUM_STATE_PATH_SEGMENTS = new Set([
+  "webstorage",
+  "local storage",
+  "session storage",
+  "code cache",
+  "gpucache",
+  "dawncache",
+  "service worker",
+  "indexeddb",
+  "blob_storage",
+]);
 const SENSITIVE_STATE_BASENAMES = new Set([
   "cookies",
   "cookies-journal",
@@ -39,7 +55,7 @@ const SECRET_PATTERNS: Array<[string, RegExp]> = [
   ["AWS access key", /\bAKIA[0-9A-Z]{16}\b/],
   ["Bearer credential", /\bBearer\s+[A-Za-z0-9._~+\/-]{20,}\b/i],
   ["credential-bearing URL", /\bhttps?:\/\/[^/\s:@]+:[^@\s/]+@/i],
-  ["secret URL query parameter", /[?&](?:access_token|refresh_token|token|api[_-]?key|secret|password)=[^&#\s]{8,}/i],
+  ["secret URL query parameter", /[?&](?:access_token|refresh_token|token|api[_-]?key|secret|password|session(?:[_-]?(?:id|key|token))?|csrf(?:[_-]?token)?|xsrf(?:[_-]?token)?)=[^&#\s]{8,}/i],
 ];
 
 function normalizePath(value: string): string {
@@ -50,10 +66,13 @@ export function forbiddenPublicPathReason(value: string): string | undefined {
   const normalized = normalizePath(value);
   const lower = normalized.toLowerCase();
   const name = basename(lower);
+  const segments = lower.split("/").filter(Boolean);
 
   if (/^\.env(?:\.|$)/i.test(name) && name !== ".env.example") return "environment file";
   if (/\.jsonl$/i.test(name) || /\.(?:log|pid|sock|key|pem|p12|pfx)$/i.test(name)) return "runtime/credential file type";
   if (/^storage-state(?:\.[^/]+)?\.json$/i.test(name)) return "browser storage state";
+  if (segments.some(segment => PRIVATE_RUNTIME_PATH_SEGMENTS.has(segment))) return "private runtime state tree";
+  if (segments.some(segment => CHROMIUM_STATE_PATH_SEGMENTS.has(segment))) return "browser profile state tree";
   if (SENSITIVE_STATE_BASENAMES.has(name)) return "browser/session/runtime state";
   if (!normalized.includes("/") && name === "config.json") return "runtime configuration";
   return undefined;
