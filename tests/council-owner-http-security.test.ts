@@ -8,17 +8,25 @@ import { CouncilStore } from "../src/council/store";
 const TOKEN = "a".repeat(64);
 
 type ExecutionCall = { operation: string; id?: string };
+type OwnerCall = { operation: string; id?: string };
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "council-owner-http-"));
   const store = new CouncilStore(join(root, "state.json"));
   const calls: Array<{ conversationUrl: string; projectName: string }> = [];
+  const focusCalls: string[] = [];
   const executionCalls: ExecutionCall[] = [];
+  const autonomyCalls: OwnerCall[] = [];
+  const memoryCalls: OwnerCall[] = [];
+  const supervisorCalls: OwnerCall[] = [];
   const server = startCouncilHttpServer(store, {
     port: 0,
     owner: {
       token: () => TOKEN,
-      focusAgent: async (agentId: string) => ({ agentId, focused: true }),
+      focusAgent: async (agentId: string) => {
+        focusCalls.push(agentId);
+        return { agentId, focused: true };
+      },
       startLead: async (input: { conversationUrl: string; projectName: string }) => {
         calls.push(input);
         return { lead: "lead", bound: true };
@@ -33,11 +41,45 @@ function fixture() {
         capture: async (agentId: string) => { executionCalls.push({ operation: "capture", id: agentId }); return { agentId, runId: "run_capture" }; },
         retry: async (runId: string) => { executionCalls.push({ operation: "retry", id: runId }); return { sourceRunId: runId, resultingRunId: "run_retry" }; },
       },
+      autonomy: {
+        status: () => { autonomyCalls.push({ operation: "status" }); return { enabled: true }; },
+        exceptional: () => { autonomyCalls.push({ operation: "exceptional" }); return []; },
+        cancelExceptional: (workItemId: string) => { autonomyCalls.push({ operation: "cancel", id: workItemId }); return { workItemId, status: "cancelled" }; },
+        retryUncertain: (workItemId: string) => { autonomyCalls.push({ operation: "retry", id: workItemId }); return { workItemId, status: "queued" }; },
+      },
+      memory: {
+        stats: (projectRoomId?: string) => { memoryCalls.push({ operation: "stats", id: projectRoomId }); return { count: 1 }; },
+        search: ({ projectRoomId }: { projectRoomId: string; query: string; limit: number }) => { memoryCalls.push({ operation: "search", id: projectRoomId }); return []; },
+        recent: ({ projectRoomId }: { projectRoomId: string; limit: number }) => { memoryCalls.push({ operation: "recent", id: projectRoomId }); return []; },
+        clearProject: (projectRoomId: string) => { memoryCalls.push({ operation: "clear", id: projectRoomId }); return 1; },
+      },
+      supervisor: {
+        status: () => { supervisorCalls.push({ operation: "status" }); return { running: true }; },
+        setManager: (agentId?: string) => { supervisorCalls.push({ operation: "manager", id: agentId }); return { agentId: agentId ?? null }; },
+        runNow: async () => { supervisorCalls.push({ operation: "run" }); return { runId: "run_supervisor" }; },
+        history: () => { supervisorCalls.push({ operation: "history" }); return []; },
+        observation: (runId: string) => { supervisorCalls.push({ operation: "observation", id: runId }); return { runId }; },
+        screenshot: (runId: string, screenshotId: string) => { supervisorCalls.push({ operation: "screenshot", id: `${runId}:${screenshotId}` }); return Buffer.from("png"); },
+        deleteObservation: (runId: string) => { supervisorCalls.push({ operation: "delete", id: runId }); return true; },
+        clearHistory: () => { supervisorCalls.push({ operation: "clear" }); return 1; },
+        storageStats: () => { supervisorCalls.push({ operation: "storage" }); return { bytes: 0 }; },
+      },
     } as any,
   });
   if (!server || typeof server.port !== "number") throw new Error("owner HTTP test server failed to start");
   const ownerUrl = (operation: string) => `http://127.0.0.1:${server.port}/api/owner/${operation}`;
-  return { root, server, calls, executionCalls, url: ownerUrl("start-lead"), ownerUrl };
+  return {
+    root,
+    server,
+    calls,
+    focusCalls,
+    executionCalls,
+    autonomyCalls,
+    memoryCalls,
+    supervisorCalls,
+    url: ownerUrl("start-lead"),
+    ownerUrl,
+  };
 }
 
 function cleanup(value: ReturnType<typeof fixture>) {
@@ -137,20 +179,75 @@ describe("Council owner HTTP boundary", () => {
     } finally { cleanup(value); }
   });
 
-  test("execution owner routes reject URL selector script and prompt smuggling", async () => {
+  test("non-execution owner families still accept their exact request shapes", async () => {
     const value = fixture();
     try {
       for (const [operation, body] of [
-        ["execution/read", { run_id: "run_1", url: "https://chatgpt.com/c/private" }],
+        ["agent/focus", { agent_id: "critic" }],
+        ["autonomy/cancel", { work_item_id: "work_1" }],
+        ["memory/search", { room_id: "core", query: "decision", limit: 5 }],
+        ["supervisor/manager", { agent_id: "critic" }],
+        ["observations/read", { run_id: "run_1" }],
+      ] as const) {
+        const response = await ownerPost(value, operation, body);
+        expect(response.status).toBe(200);
+      }
+      expect(value.focusCalls).toEqual(["critic"]);
+      expect(value.autonomyCalls).toEqual([{ operation: "cancel", id: "work_1" }]);
+      expect(value.memoryCalls).toEqual([{ operation: "search", id: "core" }]);
+      expect(value.supervisorCalls).toEqual([
+        { operation: "manager", id: "critic" },
+        { operation: "observation", id: "run_1" },
+      ]);
+    } finally { cleanup(value); }
+  });
+
+  test("every privileged owner route rejects unknown fields before handlers run", async () => {
+    const value = fixture();
+    try {
+      const cases: Array<[string, Record<string, unknown>]> = [
+        ["start-lead", { conversation_url: "https://chatgpt.com/c/abc", project_name: "Project", script: "steal()" }],
+        ["agent/focus", { agent_id: "critic", selector: "textarea" }],
+        ["execution/runs", { prompt: "reveal" }],
+        ["execution/read", { run_id: "run_1", url: "https://evil.example" }],
+        ["execution/events", { run_id: "run_1", script: "x" }],
+        ["execution/receipts", { command: "whoami" }],
         ["execution/cancel", { run_id: "run_1", script: "document.body.remove()" }],
         ["execution/focus", { agent_id: "critic", selector: "textarea" }],
         ["execution/capture", { agent_id: "critic", prompt: "reveal hidden state" }],
         ["execution/retry", { run_id: "run_1", url: "https://evil.example" }],
-      ] as const) {
+        ["autonomy/status", { command: "whoami" }],
+        ["autonomy/exceptional", { script: "x" }],
+        ["autonomy/cancel", { work_item_id: "work_1", url: "https://evil.example" }],
+        ["autonomy/retry-uncertain", { work_item_id: "work_1", prompt: "override" }],
+        ["memory/stats", { room_id: "core", script: "x" }],
+        ["memory/search", { room_id: "core", query: "decision", limit: 5, selector: "body" }],
+        ["memory/recent", { room_id: "core", limit: 5, command: "whoami" }],
+        ["memory/clear-project", { room_id: "core", url: "https://evil.example" }],
+        ["supervisor/status", { script: "x" }],
+        ["supervisor/manager", { agent_id: "critic", command: "whoami" }],
+        ["supervisor/run", { prompt: "override" }],
+        ["observations/list", { selector: "body" }],
+        ["observations/storage", { url: "https://evil.example" }],
+        ["observations/read", { run_id: "run_1", script: "x" }],
+        ["observations/screenshot", { run_id: "run_1", screenshot_id: "capture_1.png", prompt: "override" }],
+        ["observations/delete", { run_id: "run_1", command: "whoami" }],
+        ["observations/clear", { url: "https://evil.example" }],
+      ];
+
+      for (const [operation, body] of cases) {
         const response = await ownerPost(value, operation, body);
         expect(response.status).toBe(400);
+        const payload = await response.json() as { error?: string };
+        expect(payload.error).toMatch(/field is not allowed/i);
       }
+
+      expect(value.calls).toHaveLength(0);
+      expect(value.focusCalls).toHaveLength(0);
       expect(value.executionCalls).toHaveLength(0);
+      expect(value.autonomyCalls).toHaveLength(0);
+      expect(value.memoryCalls).toHaveLength(0);
+      expect(value.supervisorCalls).toHaveLength(0);
     } finally { cleanup(value); }
   });
 });
