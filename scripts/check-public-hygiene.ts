@@ -15,7 +15,7 @@ const SAFE_FIXTURES = [
   "Bearer chatgpt-session-token",
 ];
 const KNOWN_VENDOR_URL_FIXTURE_PACKAGES = ["@mixmark-io/domino", "zod", "fast-uri"];
-const MCP_SDK_ELICITATION_EXAMPLE = /^\/node_modules\/@modelcontextprotocol\/sdk\/dist\/(?:cjs|esm)\/examples\/server\/elicitationurlexample\.js$/;
+const MCP_SDK_ELICITATION_EXAMPLE = /\/node_modules\/@modelcontextprotocol\/sdk\/dist\/(?:cjs|esm)\/examples\/server\/elicitationurlexample\.js$/;
 const PRIVATE_RUNTIME_PATH_SEGMENTS = new Set([
   ".cwc-data",
   ".codex-chatgpt-web",
