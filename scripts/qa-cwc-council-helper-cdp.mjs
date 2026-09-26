@@ -145,10 +145,16 @@ try {
     try { helper.stdin.end(); } catch {}
     if (!await waitForExit(helper, 2_000)) {
       try { helper.kill("SIGTERM"); } catch {}
+      await waitForExit(helper, 2_000).catch(() => false);
     }
   }
   if (launcher && launcher.exitCode === null) {
     try { spawnSync("taskkill.exe", ["/pid", String(launcher.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore", timeout: 10_000 }); } catch {}
+    await waitForExit(launcher, 3_000).catch(() => false);
   }
-  fs.rmSync(runRoot, { recursive: true, force: true });
+  try {
+    fs.rmSync(runRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+  } catch (error) {
+    console.warn(`CWC helper probe cleanup deferred: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
