@@ -11,9 +11,11 @@ function redactText(value) {
     .replace(/tunnel_[a-f0-9]{32}/g, "[tunnel-id]")
     .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, "[runtime-key]")
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[github-token]")
+    .replace(/\b(Authorization|Proxy-Authorization|X-Api-Key)\s*:\s*[^\r\n]+/gi, "$1: [redacted]")
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{20,}\b/gi, "Bearer [redacted]")
     .replace(/\b(Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi, "$1: [redacted]")
-    .replace(/\b(access_token|refresh_token|api[_-]?key|token|password|secret)=([^&\s]+)/gi, "$1=[redacted]")
+    .replace(/\b(access_token|refresh_token|api[_-]?key|token|password|secret|session(?:[_-]?(?:id|key|token))?|csrf(?:[_-]?token)?|xsrf(?:[_-]?token)?)=([^&\s]+)/gi, "$1=[redacted]")
+    .replace(/\b(session(?:[_-]?(?:id|key|token))?|csrf(?:[_-]?token)?|xsrf(?:[_-]?token)?)\s*:\s*([^\s,;}]+)/gi, "$1: [redacted]")
     .replace(/\bhttps?:\/\/[^/\s:@]+:[^@\s/]+@/gi, "https://[credentials-redacted]@");
   return redacted.length > MAX_LOG_STRING_CHARS
     ? `${redacted.slice(0, MAX_LOG_STRING_CHARS)}…[truncated]`
@@ -23,12 +25,22 @@ function redactText(value) {
 function sensitiveKey(key) {
   const normalized = String(key).replace(/[^A-Za-z0-9]/g, "").toLowerCase();
   return normalized === "authorization"
+    || normalized === "proxyauthorization"
     || normalized === "cookie"
     || normalized === "setcookie"
     || normalized === "apikey"
+    || normalized.endsWith("apikey")
     || normalized === "runtimekey"
     || normalized === "controlkey"
     || normalized === "privatekey"
+    || normalized === "session"
+    || normalized === "sessionid"
+    || normalized === "sessionkey"
+    || normalized === "sessiontoken"
+    || normalized === "csrf"
+    || normalized === "csrftoken"
+    || normalized === "xsrf"
+    || normalized === "xsrftoken"
     || normalized.endsWith("token")
     || normalized.endsWith("password")
     || normalized.endsWith("secret")
