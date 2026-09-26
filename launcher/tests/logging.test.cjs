@@ -23,6 +23,11 @@ test("launcher logs redact tunnel ids, runtime keys, bearer credentials, and gen
       apiKey: "api-secret",
       password: "password-secret",
       clientSecret: "client-secret",
+      sessionId: "session-secret",
+      session_key: "session-key-secret",
+      csrfToken: "csrf-secret",
+      xsrf_token: "xsrf-secret",
+      xApiKey: "header-api-secret",
     },
   }), {
     line: "[tunnel-id] [runtime-key]",
@@ -34,20 +39,59 @@ test("launcher logs redact tunnel ids, runtime keys, bearer credentials, and gen
       apiKey: "[redacted]",
       password: "[redacted]",
       clientSecret: "[redacted]",
+      sessionId: "[redacted]",
+      session_key: "[redacted]",
+      csrfToken: "[redacted]",
+      xsrf_token: "[redacted]",
+      xApiKey: "[redacted]",
     },
   });
 });
 
-test("launcher log text redacts cookie headers, URL credentials, and secret query parameters", () => {
+test("launcher log text redacts auth headers, cookies, URL credentials, session and csrf material", () => {
   const value = redactText(
     "Cookie: session=super-secret-cookie\n"
-    + "https://owner:password@example.invalid/path?access_token=very-secret-access-token",
+    + "Authorization: Basic owner-secret-auth\n"
+    + "X-Api-Key: header-super-secret\n"
+    + "https://owner:password@example.invalid/path?access_token=very-secret-access-token&session_id=private-session&csrf_token=private-csrf\n"
+    + "sessionId: colon-session xsrf_token=private-xsrf",
   );
-  assert.doesNotMatch(value, /super-secret-cookie/);
-  assert.doesNotMatch(value, /owner:password/);
-  assert.doesNotMatch(value, /very-secret-access-token/);
+  for (const secret of [
+    "super-secret-cookie",
+    "owner-secret-auth",
+    "header-super-secret",
+    "owner:password",
+    "very-secret-access-token",
+    "private-session",
+    "private-csrf",
+    "colon-session",
+    "private-xsrf",
+  ]) assert.doesNotMatch(value, new RegExp(secret));
   assert.match(value, /Cookie: \[redacted\]/);
+  assert.match(value, /Authorization: \[redacted\]/);
+  assert.match(value, /X-Api-Key: \[redacted\]/);
   assert.match(value, /access_token=\[redacted\]/);
+  assert.match(value, /session_id=\[redacted\]/);
+  assert.match(value, /csrf_token=\[redacted\]/);
+});
+
+test("persisted launcher records never write session or csrf secrets", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-secret-log-"));
+  const filePath = path.join(root, "launcher.jsonl");
+  try {
+    const logger = createLogger({ filePath });
+    logger.error("secret-test", {
+      sessionToken: "persisted-session-secret",
+      message: "csrf_token=persisted-csrf-secret Authorization: Bearer persisted-bearer-secret-0123456789",
+    });
+    const written = fs.readFileSync(filePath, "utf8");
+    assert.doesNotMatch(written, /persisted-session-secret/);
+    assert.doesNotMatch(written, /persisted-csrf-secret/);
+    assert.doesNotMatch(written, /persisted-bearer-secret/);
+    assert.match(written, /\[redacted\]/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("failed launcher IPC calls are written to runtime activity", async () => {
