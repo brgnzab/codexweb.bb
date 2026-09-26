@@ -21,11 +21,13 @@ const MCP_SDK_ELICITATION_URL_FRAGMENTS = [
   "?ses" + "sion=${sessionId}&elici" + "tation=${elicitationId}",
 ];
 const FAST_URI_QUERY_FIXTURE = /\/node_modules\/fast-uri\/test\/(?:equal\.test\.js|security-normalization\.test\.js)$/;
-const FAST_URI_QUERY_FRAGMENTS = [
-  "?token=SECRET",
-  "?token=secret",
-  "?Token=Value",
-  "?token=value",
+const FAST_URI_QUERY_LITERALS = [
+  "'http://example.com/?token=SECRET'",
+  "'http://example.com/?token=secret'",
+  "'ws://example.com/?token=SECRET'",
+  "'ws://example.com/?token=secret'",
+  "'//%41.com/?Token=Value'",
+  "'//a.com/?token=value'",
 ];
 const PRIVATE_RUNTIME_PATH_SEGMENTS = new Set([
   ".cwc-data",
@@ -112,8 +114,8 @@ function scrubKnownVendorPathFixtures(value: string, displayPath: string): strin
   }
 
   if (FAST_URI_QUERY_FIXTURE.test(normalized)) {
-    for (const fragment of FAST_URI_QUERY_FRAGMENTS) {
-      scrubbed = scrubbed.split(fragment).join("[known-fast-uri-query-fixture]");
+    for (const literal of FAST_URI_QUERY_LITERALS) {
+      scrubbed = scrubbed.split(literal).join("'[known-fast-uri-query-fixture]'");
     }
   }
 
