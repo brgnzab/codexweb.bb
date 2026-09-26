@@ -41,6 +41,13 @@ class RuntimeHost extends legacy.RuntimeHost {
   mcpConnectorName() { return COUNCIL_CONNECTOR_NAME; }
   browserConnectorName() { return COUNCIL_CONNECTOR_NAME; }
 
+  setupEnvironment() {
+    if (typeof this.supervisor.coreHome !== "string" || !path.isAbsolute(this.supervisor.coreHome)) {
+      throw new Error("Council runtime supervisor has no absolute core home");
+    }
+    return { CODEX_CHATGPT_WEB_HOME: this.supervisor.coreHome };
+  }
+
   async doctor() {
     if (!this.isCouncilRuntime()) {
       return { ok: false, checks: [{ id: "council-runtime", status: "warning", message: "Local Council runtime is not configured" }] };
@@ -73,6 +80,7 @@ class RuntimeHost extends legacy.RuntimeHost {
         message: "Configuring local Council runtime",
         successMessage: "Local Council configuration saved",
         timeoutMs: MCP_SETUP_TIMEOUT_MS,
+        env: this.setupEnvironment(),
       });
       const runtime = await this.supervisor.startIfConfigured();
       if (runtime.status !== "ready") throw new Error(`Council local setup completed, but the runtime is ${runtime.status}${runtime.detail ? `: ${runtime.detail}` : ""}`);
@@ -130,6 +138,7 @@ class RuntimeHost extends legacy.RuntimeHost {
         message: reuseSavedCredentials ? "Reconnecting optional Council Tunnel" : "Connecting optional Council Tunnel",
         successMessage: "Council Tunnel configuration saved",
         timeoutMs: MCP_SETUP_TIMEOUT_MS,
+        env: this.setupEnvironment(),
       });
       const runtime = await this.supervisor.startIfConfigured();
       if (runtime.status !== "ready") throw new Error(`Council setup completed, but the runtime is ${runtime.status}${runtime.detail ? `: ${runtime.detail}` : ""}`);
