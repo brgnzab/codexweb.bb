@@ -78,19 +78,21 @@ describe("public repository hygiene", () => {
 
   test("suppresses the MCP SDK secret query fixture only in its shipped elicitation URL example", () => {
     const exampleUrl = "https://example.invalid/callback?" + "token=vendor-example-token-value";
-    for (const moduleFormat of ["cjs", "esm"]) {
-      expect(secretTextFindingsForPath(
-        exampleUrl,
-        `node_modules/@modelcontextprotocol/sdk/dist/${moduleFormat}/examples/server/elicitationUrlExample.js`,
-      )).toEqual([]);
+    for (const prefix of ["", "app/"]) {
+      for (const moduleFormat of ["cjs", "esm"]) {
+        expect(secretTextFindingsForPath(
+          exampleUrl,
+          `${prefix}node_modules/@modelcontextprotocol/sdk/dist/${moduleFormat}/examples/server/elicitationUrlExample.js`,
+        )).toEqual([]);
+      }
     }
     expect(secretTextFindingsForPath(
       exampleUrl,
-      "node_modules/@modelcontextprotocol/sdk/dist/cjs/examples/server/otherExample.js",
+      "app/node_modules/@modelcontextprotocol/sdk/dist/cjs/examples/server/otherExample.js",
     )).toContain("secret URL query parameter");
     expect(secretTextFindingsForPath(
       exampleUrl,
-      "node_modules/other-package/dist/cjs/examples/server/elicitationUrlExample.js",
+      "app/node_modules/other-package/dist/cjs/examples/server/elicitationUrlExample.js",
     )).toContain("secret URL query parameter");
   });
 });
