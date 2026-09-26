@@ -35,6 +35,7 @@ jobs:
         shell: pwsh
         run: >-
           bun test
+          tests/council-node-playwright-helper.test.ts
           tests/council-browser-transport.test.ts
           tests/council-local-setup.test.ts
           tests/council-product-mode-contract.test.ts
@@ -43,6 +44,9 @@ jobs:
       - name: Full verify
         shell: pwsh
         run: bun run verify
+      - name: Actual Council Node helper CDP probe
+        shell: pwsh
+        run: node scripts/qa-cwc-council-helper-cdp.mjs
       - name: Integrity
         shell: pwsh
         run: |
