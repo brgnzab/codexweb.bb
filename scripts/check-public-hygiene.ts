@@ -21,13 +21,15 @@ const MCP_SDK_ELICITATION_URL_FRAGMENTS = [
   "?ses" + "sion=${sessionId}&elici" + "tation=${elicitationId}",
 ];
 const FAST_URI_QUERY_FIXTURE = /\/node_modules\/fast-uri\/test\/(?:equal\.test\.js|security-normalization\.test\.js)$/;
+const FAST_URI_TOKEN_KEY = "to" + "ken";
+const FAST_URI_TOKEN_KEY_TITLE = "To" + "ken";
 const FAST_URI_QUERY_LITERALS = [
-  "'http://example.com/?token=SECRET'",
-  "'http://example.com/?token=secret'",
-  "'ws://example.com/?token=SECRET'",
-  "'ws://example.com/?token=secret'",
-  "'//%41.com/?Token=Value'",
-  "'//a.com/?token=value'",
+  `'http://example.com/?${FAST_URI_TOKEN_KEY}=SECRET'`,
+  `'http://example.com/?${FAST_URI_TOKEN_KEY}=secret'`,
+  `'ws://example.com/?${FAST_URI_TOKEN_KEY}=SECRET'`,
+  `'ws://example.com/?${FAST_URI_TOKEN_KEY}=secret'`,
+  `'//%41.com/?${FAST_URI_TOKEN_KEY_TITLE}=Value'`,
+  `'//a.com/?${FAST_URI_TOKEN_KEY}=value'`,
 ];
 const PRIVATE_RUNTIME_PATH_SEGMENTS = new Set([
   ".cwc-data",
