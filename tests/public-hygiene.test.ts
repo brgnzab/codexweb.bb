@@ -19,12 +19,27 @@ describe("public repository hygiene", () => {
     expect(forbiddenPublicPathReason("profile/WebStorage/QuotaManager")).toBe("browser profile state tree");
     expect(forbiddenPublicPathReason("profile/Network/Network Persistent State")).toBe("browser profile state tree");
     expect(forbiddenPublicPathReason("profile/Cache/data_0")).toBe("browser profile state tree");
+    expect(forbiddenPublicPathReason("Default/Network/Network Persistent State")).toBe("browser profile state tree");
+    expect(forbiddenPublicPathReason("Cache/data_0")).toBe("browser profile state tree");
     expect(forbiddenPublicPathReason("profile/IndexedDB/chatgpt.indexeddb.leveldb/000001.log")).toBeTruthy();
     expect(forbiddenPublicPathReason("profile/Service Worker/Database/000001.log")).toBeTruthy();
     expect(forbiddenPublicPathReason("profile/GPUCache/data_0")).toBe("browser profile state tree");
     expect(forbiddenPublicPathReason("README.md")).toBeUndefined();
     expect(forbiddenPublicPathReason("src/config.ts")).toBeUndefined();
     expect(forbiddenPublicPathReason("src/council/store.ts")).toBeUndefined();
+  });
+
+  test("allows dependency source directories named network or cache without weakening profile rejection", () => {
+    expect(forbiddenPublicPathReason("app/node_modules/chromium-bidi/lib/cjs/bidiMapper/modules/network/NetworkProcessor.js"))
+      .toBeUndefined();
+    expect(forbiddenPublicPathReason("app/node_modules/hono/dist/middleware/cache/index.js"))
+      .toBeUndefined();
+    expect(forbiddenPublicPathReason("node_modules/.bun/example@1.0.0/node_modules/example/src/network/index.js"))
+      .toBeUndefined();
+    expect(forbiddenPublicPathReason("profile/Network/Network Persistent State"))
+      .toBe("browser profile state tree");
+    expect(forbiddenPublicPathReason("profile/Cache/data_0"))
+      .toBe("browser profile state tree");
   });
 
   test("detects high-confidence credentials and private credential-bearing URLs", () => {
@@ -104,5 +119,27 @@ describe("public repository hygiene", () => {
       knownFixtureText,
       "app/node_modules/other-package/dist/cjs/examples/server/elicitationUrlExample.js",
     )).toContain("secret URL query parameter");
+  });
+
+  test("suppresses only exact fast-uri query examples and keeps same-path unrelated credentials visible", () => {
+    const equalFixture = "http://example.com/?token=SECRET";
+    const securityFixture = "//%41.com/?Token=Value";
+    const unrelatedPasswordUrl = "https://example.invalid/?pass" + "word=unrelated-private-password";
+
+    for (const prefix of ["", "app/"]) {
+      const equalPath = `${prefix}node_modules/fast-uri/test/equal.test.js`;
+      const securityPath = `${prefix}node_modules/fast-uri/test/security-normalization.test.js`;
+      expect(secretTextFindingsForPath(equalFixture, equalPath)).toEqual([]);
+      expect(secretTextFindingsForPath(securityFixture, securityPath)).toEqual([]);
+      expect(secretTextFindingsForPath(`${equalFixture}\n${unrelatedPasswordUrl}`, equalPath))
+        .toContain("secret URL query parameter");
+      expect(secretTextFindingsForPath(`${securityFixture}\n${unrelatedPasswordUrl}`, securityPath))
+        .toContain("secret URL query parameter");
+    }
+
+    expect(secretTextFindingsForPath(equalFixture, "app/node_modules/fast-uri/test/other.test.js"))
+      .toContain("secret URL query parameter");
+    expect(secretTextFindingsForPath(equalFixture, "app/node_modules/other-package/test/equal.test.js"))
+      .toContain("secret URL query parameter");
   });
 });
