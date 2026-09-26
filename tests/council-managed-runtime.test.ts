@@ -86,4 +86,49 @@ describe("CouncilManagedRuntime", () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
+  test("manager model FINAL_DECISION enforces the shared readiness gate without Council mutation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-runtime-decision-gate-"));
+    try {
+      const council = new CouncilStore(join(root, "state.json"));
+      council.joinAgent({ id: "alice", name: "Alice", role: "Lead" });
+      const managed = new ManagedAgentStateStore(join(root, "agents.json"));
+      const runtime = new CouncilManagedRuntime({
+        council,
+        managed,
+        project: new ManagedProjectStateStore(join(root, "project.json")),
+        registry: new CouncilAgentRegistry(),
+        transport: {
+          async run() {
+            return { answer: "Finalize immediately", conversationUrl: "https://chatgpt.com/c/alice", resumed: false };
+          },
+          async release() { return true; },
+        } as any,
+        parseAnswer: (() => ({
+          visibleText: "Finalize immediately",
+          batch: {
+            version: 1 as const,
+            actions: [{
+              type: "FINAL_DECISION" as const,
+              room_id: "core",
+              title: "Unsafe premature decision",
+              policy: "Ship without deliberation",
+              rationale: "Model requested finalization before any proposal",
+              accepted_arguments: [],
+              rejected_arguments: [],
+              unresolved_risks: [],
+            }],
+          },
+        })) as any,
+      });
+      runtime.startProject("alice", { roomId: "core", name: "Core", mission: "Build safely", mandate: "Lead deliberation" });
+      const before = council.snapshot();
+
+      await expect(runtime.runManagerObservation("alice", "Observe current state", []))
+        .rejects.toThrow(/final decision gate is not ready|proposal/i);
+
+      expect(council.snapshot()).toEqual(before);
+      expect(council.snapshot().decisions).toHaveLength(0);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
 });

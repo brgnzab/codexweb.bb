@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { CouncilBrowserAction, ParsedCouncilActionFooter } from "./browser-actions";
 import type { CouncilAgentRegistry } from "./agent-registry";
 import type { CouncilBrowserTransport, CouncilExecutionObserver, CouncilPromptAttachment } from "./browser-transport";
+import { assertCouncilDecisionGate } from "./decision-gate";
 import type { CouncilPermission, ManagedAgentRecord, ManagedAgentStateStore } from "./managed-agent-state";
 import { assertBrowserActionPermission } from "./policy";
 import { buildAgentBootstrapPrompt, buildAgentResurrectionPrompt } from "./resurrection";
@@ -314,6 +315,7 @@ export class CouncilAgentManager {
             break;
           }
           case "FINAL_DECISION":
+            assertCouncilDecisionGate(this.council.snapshot(), action.room_id);
             this.council.decide({ roomId: action.room_id, createdByAgentId: source.id, title: action.title, policy: action.policy, rationale: action.rationale, acceptedArguments: action.accepted_arguments ?? [], rejectedArguments: action.rejected_arguments ?? [], unresolvedRisks: action.unresolved_risks ?? [] });
             break;
           case "CHECKPOINT":
