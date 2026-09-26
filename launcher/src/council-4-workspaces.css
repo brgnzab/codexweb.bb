@@ -40,6 +40,7 @@
 .status-unverified > i, .council-statusbar .status-unverified i { background: #78869a !important; }
 .status-offline > i, .status-blocked > i, .council-statusbar .status-offline i, .council-statusbar .status-blocked i { background: var(--c-danger) !important; }
 
+.work-tasks { container-type: inline-size; }
 .manager-control {
   margin: 0 0 18px; padding: 14px 0 15px; display: grid;
   grid-template-columns: minmax(0,1fr) auto; gap: 12px 18px; align-items: center;
@@ -55,6 +56,11 @@
 .manager-control-meta strong { color: #a9b5c5; font-weight: 620; }
 .manager-control-meta small { color: #718197; }
 .manager-control .inline-error { grid-column: 1 / -1; margin: 0; color: var(--c-danger); font-size: 12px; }
+
+@container (max-width: 720px) {
+  .manager-control { grid-template-columns: 1fr; }
+  .manager-control-actions { justify-content: flex-start; }
+}
 
 .connection-setup-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin-top: 16px; border-top: 1px solid var(--c-line); border-bottom: 1px solid var(--c-line); }
 .connection-setup-pane { min-width: 0; padding: 16px 2px 17px; background: transparent; }
