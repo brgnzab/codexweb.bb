@@ -30,7 +30,7 @@ test("CI and release use frozen installs and the exact Node pin", () => {
 
 test("recorded Windows build toolchain matches committed launcher lock", () => {
   const lock = read(launcherRoot, "bun.lock");
-  assert.match(lock, /electron@41\.7\.1/);
+  assert.match(lock, /electron@41\.10\.7/);
   assert.match(lock, /electron-builder@26\.15\.3/);
   assert.match(lock, /vite@6\.4\.3/);
   assert.match(lock, /esbuild@0\.25\.12/);
@@ -42,6 +42,18 @@ test("recorded Windows build toolchain matches committed launcher lock", () => {
   assert.equal(rootManifest.packageManager, "bun@1.3.14");
   assert.equal(rootManifest.engines.bun, "1.3.14");
   assert.equal(rootManifest.engines.node, "22.23.2");
+});
+
+test("launcher security floors remain pinned", () => {
+  const manifest = JSON.parse(read(launcherRoot, "package.json"));
+  assert.equal(manifest.devDependencies.electron, "41.10.7");
+  assert.deepEqual(manifest.overrides, {
+    "@xmldom/xmldom": "0.8.15",
+    "brace-expansion": "1.1.18",
+    "fast-uri": "3.1.8",
+    "js-yaml": "4.3.2",
+    "nanoid": "3.3.18",
+  });
 });
 
 test("supply-chain lifecycle inventory is committed and callable", () => {
