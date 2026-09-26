@@ -297,7 +297,7 @@ class RuntimeSupervisor extends legacy.RuntimeSupervisor {
     await this.startTunnel(config, "runtime-recovery");
     if (!this.tunnel || !await this.tunnelHealth(config)) throw new Error("Council Tunnel is unavailable after recovery");
     if (!this.tryWriteState("ready")) throw new Error("Recovered Council runtime could not persist launcher ownership");
-    this.publishOperation?.({ name: "runtime-recovery", status: "completed", message: "Council Tunnel recovered" });
+    this.publishOperation?.({ name: "runtime-recovery", status: "completed", message: "Council tunnel recovered" });
     setCouncilRuntimeLive(true);
   }
 
