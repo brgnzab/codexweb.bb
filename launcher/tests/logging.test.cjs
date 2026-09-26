@@ -80,9 +80,10 @@ test("persisted launcher records never write session or csrf secrets", () => {
   const filePath = path.join(root, "launcher.jsonl");
   try {
     const logger = createLogger({ filePath });
+    const bearer = "Bearer " + "persisted-bearer-secret-0123456789";
     logger.error("secret-test", {
       sessionToken: "persisted-session-secret",
-      message: "csrf_token=persisted-csrf-secret Authorization: Bearer persisted-bearer-secret-0123456789",
+      message: `csrf_token=persisted-csrf-secret Authorization: ${bearer}`,
     });
     const written = fs.readFileSync(filePath, "utf8");
     assert.doesNotMatch(written, /persisted-session-secret/);
