@@ -121,10 +121,11 @@ describe("public repository hygiene", () => {
     )).toContain("secret URL query parameter");
   });
 
-  test("suppresses only exact fast-uri query examples and keeps same-path unrelated credentials visible", () => {
-    const equalFixture = "http://example.com/?token=SECRET";
-    const securityFixture = "//%41.com/?Token=Value";
+  test("suppresses only exact fast-uri quoted URI literals and keeps unrelated credentials visible", () => {
+    const equalFixture = "'http://example.com/?token=SECRET'";
+    const securityFixture = "'//%41.com/?Token=Value'";
     const unrelatedPasswordUrl = "https://example.invalid/?pass" + "word=unrelated-private-password";
+    const unrelatedTokenUrl = "https://example.invalid/?token=" + "dependency-private-token-value";
 
     for (const prefix of ["", "app/"]) {
       const equalPath = `${prefix}node_modules/fast-uri/test/equal.test.js`;
@@ -135,11 +136,13 @@ describe("public repository hygiene", () => {
         .toContain("secret URL query parameter");
       expect(secretTextFindingsForPath(`${securityFixture}\n${unrelatedPasswordUrl}`, securityPath))
         .toContain("secret URL query parameter");
+      expect(secretTextFindingsForPath("'http://example.com/?token=SECRET-LONGER-CREDENTIAL'", equalPath))
+        .toContain("secret URL query parameter");
     }
 
-    expect(secretTextFindingsForPath(equalFixture, "app/node_modules/fast-uri/test/other.test.js"))
+    expect(secretTextFindingsForPath(unrelatedTokenUrl, "app/node_modules/fast-uri/test/other.test.js"))
       .toContain("secret URL query parameter");
-    expect(secretTextFindingsForPath(equalFixture, "app/node_modules/other-package/test/equal.test.js"))
+    expect(secretTextFindingsForPath(unrelatedTokenUrl, "app/node_modules/other-package/test/equal.test.js"))
       .toContain("secret URL query parameter");
   });
 });
