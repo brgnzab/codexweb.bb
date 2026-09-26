@@ -18,7 +18,7 @@ import { CouncilMemoryProjector } from "./memory-projector";
 import { runCouncilMcpServer } from "./mcp-server";
 import { CouncilObservationStore } from "./observation-store";
 import { issueCouncilOwnerControl } from "./owner-control";
-import { PlaywrightCouncilChatDriver } from "./playwright-council-driver";
+import { NodePlaywrightCouncilChatDriver } from "./node-playwright-council-driver";
 import { CouncilStaleWorkMonitor } from "./stale-work-monitor";
 import { CouncilStore } from "./store";
 import { CouncilSupervisor } from "./supervisor";
@@ -72,7 +72,7 @@ export async function runCouncilMcpMain(args: string[]): Promise<void> {
     if (config.browserHost === "launcher" && config.browserHostDescriptorPath) {
       const control = createLauncherPersistentTurnControl(config.browserHostDescriptorPath);
       execution = new CouncilExecutionControlPlane();
-      const transport = new CouncilBrowserTransport(control, new PlaywrightCouncilChatDriver(config.browserHostDescriptorPath), { execution });
+      const transport = new CouncilBrowserTransport(control, new NodePlaywrightCouncilChatDriver(config.browserHostDescriptorPath), { execution });
       managedState = new ManagedAgentStateStore(join(councilDir, "managed-agents.json"));
       managedRuntime = new CouncilManagedRuntime({
         council: store,
