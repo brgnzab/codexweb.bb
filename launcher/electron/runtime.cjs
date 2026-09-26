@@ -42,10 +42,16 @@ class RuntimeHost extends legacy.RuntimeHost {
   browserConnectorName() { return COUNCIL_CONNECTOR_NAME; }
 
   setupEnvironment() {
-    if (typeof this.supervisor.coreHome !== "string" || !path.isAbsolute(this.supervisor.coreHome)) {
+    const configPath = this.supervisor.configPath;
+    const coreHome = typeof this.supervisor.coreHome === "string" && this.supervisor.coreHome.trim()
+      ? this.supervisor.coreHome
+      : typeof configPath === "string" && path.isAbsolute(configPath)
+        ? path.dirname(configPath)
+        : "";
+    if (!coreHome || !path.isAbsolute(coreHome)) {
       throw new Error("Council runtime supervisor has no absolute core home");
     }
-    return { CODEX_CHATGPT_WEB_HOME: this.supervisor.coreHome };
+    return { CODEX_CHATGPT_WEB_HOME: coreHome };
   }
 
   async doctor() {
