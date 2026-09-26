@@ -1,0 +1,77 @@
+name: CWC-017 Local Runtime Gate
+
+on:
+  push:
+    branches:
+      - cwc-personal
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-runtime:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22.23.2
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+
+      - name: Setup Bun 1.3.14
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Frozen root install
+        shell: pwsh
+        run: bun install --frozen-lockfile
+
+      - name: Frozen launcher install
+        shell: pwsh
+        run: bun install --cwd launcher --frozen-lockfile
+
+      - name: Focused Council tests
+        shell: pwsh
+        run: >-
+          bun test
+          tests/council-local-setup.test.ts
+          tests/council-product-mode-contract.test.ts
+          tests/council-conversation-registry.test.ts
+          tests/council-browser-transport.test.ts
+          tests/council-launcher-turn-control.test.ts
+          tests/council-playwright-surface.test.ts
+
+      - name: Focused launcher tests
+        shell: pwsh
+        run: >-
+          node --test --test-isolation=none
+          launcher/tests/council-local-runtime.test.cjs
+          launcher/tests/agent-surface-registry.test.cjs
+          launcher/tests/council-agent-focus-contract.test.cjs
+          launcher/tests/council-browser-host.test.cjs
+
+      - name: Typecheck
+        shell: pwsh
+        run: bun run typecheck
+
+      - name: Full verify
+        shell: pwsh
+        run: bun run verify
+
+      - name: Actual local Council runtime smoke
+        shell: pwsh
+        run: node scripts/qa-cwc-local-runtime.mjs
+
+      - name: Lockfile and repository integrity
+        shell: pwsh
+        run: |
+          git diff --exit-code -- bun.lock launcher/bun.lock
+          if (git status --short) {
+            git status --short
+            throw "Tracked worktree changed during CWC-017 local runtime gate"
+          }
