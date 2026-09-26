@@ -200,6 +200,36 @@ function ownerExactKeys(body: Record<string, unknown>, allowed: readonly string[
   }
 }
 
+const OWNER_ROUTE_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "/api/owner/start-lead": ["conversation_url", "project_name"],
+  "/api/owner/agent/focus": ["agent_id"],
+  "/api/owner/execution/runs": [],
+  "/api/owner/execution/read": ["run_id"],
+  "/api/owner/execution/events": ["run_id"],
+  "/api/owner/execution/receipts": [],
+  "/api/owner/execution/cancel": ["run_id"],
+  "/api/owner/execution/focus": ["agent_id"],
+  "/api/owner/execution/capture": ["agent_id"],
+  "/api/owner/execution/retry": ["run_id"],
+  "/api/owner/autonomy/status": [],
+  "/api/owner/autonomy/exceptional": [],
+  "/api/owner/autonomy/cancel": ["work_item_id"],
+  "/api/owner/autonomy/retry-uncertain": ["work_item_id"],
+  "/api/owner/memory/stats": ["room_id"],
+  "/api/owner/memory/search": ["room_id", "query", "limit"],
+  "/api/owner/memory/recent": ["room_id", "limit"],
+  "/api/owner/memory/clear-project": ["room_id"],
+  "/api/owner/supervisor/status": [],
+  "/api/owner/supervisor/manager": ["agent_id"],
+  "/api/owner/supervisor/run": [],
+  "/api/owner/observations/list": [],
+  "/api/owner/observations/storage": [],
+  "/api/owner/observations/read": ["run_id"],
+  "/api/owner/observations/screenshot": ["run_id", "screenshot_id"],
+  "/api/owner/observations/delete": ["run_id"],
+  "/api/owner/observations/clear": [],
+});
+
 export function startCouncilHttpServer(
   store: CouncilStore,
   options: { port?: number; onError?: (message: string) => void; managedSnapshot?: () => CouncilManagedPublicView | null; owner?: CouncilOwnerApi } = {},
@@ -253,6 +283,9 @@ export function startCouncilHttpServer(
           if (request.method !== "POST") return new Response("Method not allowed", { status: 405, headers: responseHeaders(undefined, "text/plain; charset=utf-8") });
           try {
             const body = await parseOwnerJson(request);
+            const allowedOwnerFields = OWNER_ROUTE_FIELDS[url.pathname];
+            if (allowedOwnerFields) ownerExactKeys(body, allowedOwnerFields);
+
             if (url.pathname === "/api/owner/start-lead") {
               const conversationUrl = ownerString(body, "conversation_url", 1_000);
               const projectName = ownerString(body, "project_name", 160);
@@ -264,38 +297,14 @@ export function startCouncilHttpServer(
             if (url.pathname.startsWith("/api/owner/execution/")) {
               const execution = options.owner?.execution;
               if (!execution) return ownerJson("Council execution operator controls are unavailable", 503);
-              if (url.pathname === "/api/owner/execution/runs") {
-                ownerExactKeys(body, []);
-                return ownerJson(execution.runs());
-              }
-              if (url.pathname === "/api/owner/execution/read") {
-                ownerExactKeys(body, ["run_id"]);
-                return ownerJson(execution.run(ownerId(body, "run_id")));
-              }
-              if (url.pathname === "/api/owner/execution/events") {
-                ownerExactKeys(body, ["run_id"]);
-                return ownerJson(execution.events(ownerId(body, "run_id")));
-              }
-              if (url.pathname === "/api/owner/execution/receipts") {
-                ownerExactKeys(body, []);
-                return ownerJson(execution.receipts());
-              }
-              if (url.pathname === "/api/owner/execution/cancel") {
-                ownerExactKeys(body, ["run_id"]);
-                return ownerJson(execution.cancel(ownerId(body, "run_id")));
-              }
-              if (url.pathname === "/api/owner/execution/focus") {
-                ownerExactKeys(body, ["agent_id"]);
-                return ownerJson(await execution.focus(ownerId(body, "agent_id")));
-              }
-              if (url.pathname === "/api/owner/execution/capture") {
-                ownerExactKeys(body, ["agent_id"]);
-                return ownerJson(await execution.capture(ownerId(body, "agent_id")));
-              }
-              if (url.pathname === "/api/owner/execution/retry") {
-                ownerExactKeys(body, ["run_id"]);
-                return ownerJson(await execution.retry(ownerId(body, "run_id")));
-              }
+              if (url.pathname === "/api/owner/execution/runs") return ownerJson(execution.runs());
+              if (url.pathname === "/api/owner/execution/read") return ownerJson(execution.run(ownerId(body, "run_id")));
+              if (url.pathname === "/api/owner/execution/events") return ownerJson(execution.events(ownerId(body, "run_id")));
+              if (url.pathname === "/api/owner/execution/receipts") return ownerJson(execution.receipts());
+              if (url.pathname === "/api/owner/execution/cancel") return ownerJson(execution.cancel(ownerId(body, "run_id")));
+              if (url.pathname === "/api/owner/execution/focus") return ownerJson(await execution.focus(ownerId(body, "agent_id")));
+              if (url.pathname === "/api/owner/execution/capture") return ownerJson(await execution.capture(ownerId(body, "agent_id")));
+              if (url.pathname === "/api/owner/execution/retry") return ownerJson(await execution.retry(ownerId(body, "run_id")));
               return ownerJson("Unknown execution owner operation", 404);
             }
 
