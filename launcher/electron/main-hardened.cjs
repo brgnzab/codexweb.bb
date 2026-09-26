@@ -1,9 +1,30 @@
+const path = require("node:path");
 const { WebContentsView, shell } = require("electron");
 const browserHostModule = require("./browser-host.cjs");
+const { assertPrivateRuntimeDataPath } = require("./runtime-state-policy.cjs");
 
 const { BrowserHost, allowedAuthUrl } = browserHostModule;
 const CHATGPT_PARTITION = "persist:codex-web-gpt-chatgpt";
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
+
+function validateConfiguredRuntimeRoots() {
+  const sourceRoot = path.resolve(__dirname, "../..");
+  const forbiddenRoots = [
+    sourceRoot,
+    process.resourcesPath ? path.resolve(process.resourcesPath) : "",
+    path.dirname(process.execPath),
+  ].filter(Boolean);
+  for (const [name, rawValue] of [
+    ["CODEX_CHATGPT_WEB_HOME", process.env.CODEX_CHATGPT_WEB_HOME],
+    ["CODEX_WEB_GPT_LAUNCHER_DATA_DIR", process.env.CODEX_WEB_GPT_LAUNCHER_DATA_DIR],
+  ]) {
+    const value = typeof rawValue === "string" ? rawValue.trim() : "";
+    if (!value) continue;
+    assertPrivateRuntimeDataPath(path.resolve(value), { label: name, forbiddenRoots });
+  }
+}
+
+validateConfiguredRuntimeRoots();
 
 function allowedAuthNavigationUrl(value) {
   if (allowedAuthUrl(value)) return true;
