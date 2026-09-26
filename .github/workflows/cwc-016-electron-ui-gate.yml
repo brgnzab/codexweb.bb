@@ -1,0 +1,51 @@
+name: CWC-016 Electron UI Gate
+
+on:
+  push:
+    branches: [cwc-personal]
+
+permissions:
+  contents: read
+
+jobs:
+  source-ui:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22.23.2"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Frozen root install
+        run: bun install --frozen-lockfile
+
+      - name: Frozen launcher install
+        working-directory: launcher
+        run: bun install --frozen-lockfile
+
+      - name: Full verify before UI gate
+        run: bun run verify
+
+      - name: Actual source Electron UI gate
+        env:
+          CWC_QA_EVIDENCE_DIR: ${{ github.workspace }}\.cwc-data\qa-source-ui-gate
+          CWC_QA_RUNTIME_DIR: ${{ runner.temp }}\cwc-source-ui-runtime
+        run: bun run qa:source-ui
+
+      - name: Final integrity
+        shell: powershell
+        run: |
+          git diff --exit-code -- bun.lock launcher/bun.lock
+          if (git status --porcelain) { git status --short; exit 1 }
+
+      - name: Upload source UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cwc-016-source-ui-${{ github.sha }}
+          path: .cwc-data/qa-source-ui-gate
+          if-no-files-found: warn
