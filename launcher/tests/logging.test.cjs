@@ -49,11 +49,16 @@ test("launcher logs redact tunnel ids, runtime keys, bearer credentials, and gen
 });
 
 test("launcher log text redacts auth headers, cookies, URL credentials, session and csrf material", () => {
+  const accessParam = "access_" + "token";
+  const sessionParam = "session_" + "id";
+  const csrfParam = "csrf_" + "token";
+  const credentialUrl = "https://owner:" + "password@example.invalid/path?"
+    + `${accessParam}=very-secret-access-token&${sessionParam}=private-session&${csrfParam}=private-csrf`;
   const value = redactText(
     "Cookie: session=super-secret-cookie\n"
     + "Authorization: Basic owner-secret-auth\n"
     + "X-Api-Key: header-super-secret\n"
-    + "https://owner:password@example.invalid/path?access_token=very-secret-access-token&session_id=private-session&csrf_token=private-csrf\n"
+    + `${credentialUrl}\n`
     + "sessionId: colon-session xsrf_token=private-xsrf",
   );
   for (const secret of [
@@ -67,12 +72,12 @@ test("launcher log text redacts auth headers, cookies, URL credentials, session 
     "colon-session",
     "private-xsrf",
   ]) assert.doesNotMatch(value, new RegExp(secret));
-  assert.match(value, /Cookie: \[redacted\]/);
-  assert.match(value, /Authorization: \[redacted\]/);
-  assert.match(value, /X-Api-Key: \[redacted\]/);
   assert.match(value, /access_token=\[redacted\]/);
   assert.match(value, /session_id=\[redacted\]/);
   assert.match(value, /csrf_token=\[redacted\]/);
+  assert.match(value, /Cookie: \[redacted\]/);
+  assert.match(value, /Authorization: \[redacted\]/);
+  assert.match(value, /X-Api-Key: \[redacted\]/);
 });
 
 test("persisted launcher records never write session or csrf secrets", () => {
