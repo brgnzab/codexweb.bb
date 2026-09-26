@@ -27,6 +27,7 @@
     "smoke": "bun run scripts/smoke-release.ts dist/runtime",
     "launcher": "bun run scripts/start-launcher.ts",
     "app": "bun run scripts/start-launcher.ts",
+    "app:powershell": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-cwc.ps1",
     "app:package": "bun run --cwd launcher package",
     "app:smoke": "bun run --cwd launcher smoke:package",
     "launcher:dev": "bun run --cwd launcher dev",
