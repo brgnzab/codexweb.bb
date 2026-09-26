@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dir, "..");
 const launcherScript = readFileSync(resolve(root, "scripts", "start-cwc.ps1"), "utf8");
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as { scripts?: Record<string, string> };
-const readme = readFileSync(resolve(root, "README.md"), "utf8");
+const sourceRunDoc = readFileSync(resolve(root, "docs", "CWC_SOURCE_RUN.md"), "utf8");
 
 describe("CWC Personal hardened source launch", () => {
   test("PowerShell entrypoint is Windows x64 only and enforces the frozen toolchain", () => {
@@ -26,7 +26,8 @@ describe("CWC Personal hardened source launch", () => {
 
   test("repo exposes and documents the PowerShell source launch path", () => {
     expect(packageJson.scripts?.["app:powershell"]).toBe("powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-cwc.ps1");
-    expect(readme).toContain('scripts\\start-cwc.ps1');
-    expect(readme).toContain('Windows 11 x64');
+    expect(sourceRunDoc).toContain('scripts\\start-cwc.ps1');
+    expect(sourceRunDoc).toContain('Windows 11 x64');
+    expect(sourceRunDoc).toContain('-ValidateOnly');
   });
 });
