@@ -16,6 +16,10 @@ const SAFE_FIXTURES = [
 ];
 const KNOWN_VENDOR_URL_FIXTURE_PACKAGES = ["@mixmark-io/domino", "zod", "fast-uri"];
 const MCP_SDK_ELICITATION_EXAMPLE = /\/node_modules\/@modelcontextprotocol\/sdk\/dist\/(?:cjs|esm)\/examples\/server\/elicitationurlexample\.js$/;
+const MCP_SDK_ELICITATION_URL_FRAGMENTS = [
+  "?ses" + "sion=${sessionId}&elici" + "tation=${elicitationId}&cartId=${encodeURIComponent(cartId)}",
+  "?ses" + "sion=${sessionId}&elici" + "tation=${elicitationId}",
+];
 const PRIVATE_RUNTIME_PATH_SEGMENTS = new Set([
   ".cwc-data",
   ".codex-chatgpt-web",
@@ -25,6 +29,8 @@ const CHROMIUM_STATE_PATH_SEGMENTS = new Set([
   "webstorage",
   "local storage",
   "session storage",
+  "network",
+  "cache",
   "code cache",
   "gpucache",
   "dawncache",
@@ -85,6 +91,17 @@ function scrubKnownFixtures(value: string): string {
   return scrubbed;
 }
 
+function scrubKnownVendorPathFixtures(value: string, displayPath: string): string {
+  const normalized = `/${normalizePath(displayPath).toLowerCase()}`;
+  if (!MCP_SDK_ELICITATION_EXAMPLE.test(normalized)) return value;
+
+  let scrubbed = value;
+  for (const fragment of MCP_SDK_ELICITATION_URL_FRAGMENTS) {
+    scrubbed = scrubbed.split(fragment).join("[known-mcp-sdk-elicitation-url-fixture]");
+  }
+  return scrubbed;
+}
+
 export function secretTextFindings(value: string): string[] {
   const text = scrubKnownFixtures(value);
   return SECRET_PATTERNS.filter(([, pattern]) => pattern.test(text)).map(([label]) => label);
@@ -93,11 +110,6 @@ export function secretTextFindings(value: string): string[] {
 function isKnownVendorFixture(displayPath: string, finding: string): boolean {
   const normalized = `/${normalizePath(displayPath).toLowerCase()}`;
   if (!normalized.includes("/node_modules/")) return false;
-
-  if (finding === "secret URL query parameter" && MCP_SDK_ELICITATION_EXAMPLE.test(normalized)) {
-    return true;
-  }
-
   if (finding !== "credential-bearing URL") return false;
   const fixturePath = /\/(?:test|tests|fixture|fixtures|__tests__)\//.test(normalized)
     || /\/[^/]*(?:test|spec)\.[^/]+$/.test(normalized);
@@ -109,7 +121,8 @@ function isKnownVendorFixture(displayPath: string, finding: string): boolean {
 }
 
 export function secretTextFindingsForPath(value: string, displayPath: string): string[] {
-  return secretTextFindings(value).filter(finding => !isKnownVendorFixture(displayPath, finding));
+  const scrubbed = scrubKnownVendorPathFixtures(value, displayPath);
+  return secretTextFindings(scrubbed).filter(finding => !isKnownVendorFixture(displayPath, finding));
 }
 
 function textContent(path: string): string | undefined {
