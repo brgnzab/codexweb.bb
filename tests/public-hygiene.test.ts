@@ -12,17 +12,30 @@ describe("public repository hygiene", () => {
     expect(forbiddenPublicPathReason("council/owner-control.json")).toBeTruthy();
     expect(forbiddenPublicPathReason("launcher-state.json")).toBeTruthy();
     expect(forbiddenPublicPathReason("session.jsonl")).toBeTruthy();
+    expect(forbiddenPublicPathReason("nested/.cwc-data/council/state.json")).toBe("private runtime state tree");
+    expect(forbiddenPublicPathReason("nested/.codex-chatgpt-web/runtime/config.json")).toBe("private runtime state tree");
+    expect(forbiddenPublicPathReason("profile/Local Storage/leveldb/000003.log")).toBeTruthy();
+    expect(forbiddenPublicPathReason("profile/Session Storage/000005.ldb")).toBe("browser profile state tree");
+    expect(forbiddenPublicPathReason("profile/WebStorage/QuotaManager")).toBe("browser profile state tree");
+    expect(forbiddenPublicPathReason("profile/IndexedDB/chatgpt.indexeddb.leveldb/000001.log")).toBeTruthy();
+    expect(forbiddenPublicPathReason("profile/Service Worker/Database/000001.log")).toBeTruthy();
+    expect(forbiddenPublicPathReason("profile/GPUCache/data_0")).toBe("browser profile state tree");
     expect(forbiddenPublicPathReason("README.md")).toBeUndefined();
     expect(forbiddenPublicPathReason("src/config.ts")).toBeUndefined();
+    expect(forbiddenPublicPathReason("src/council/store.ts")).toBeUndefined();
   });
 
   test("detects high-confidence credentials and private credential-bearing URLs", () => {
     const githubToken = "github_" + "pat_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
     const credentialUrl = "https://owner:" + "secret@example.invalid/path";
     const queryUrl = "https://example.invalid/?access_" + "token=super-secret-access-token";
+    const sessionUrl = "https://example.invalid/?session_" + "id=private-session-credential";
+    const csrfUrl = "https://example.invalid/?csrf_" + "token=private-csrf-credential";
     expect(secretTextFindings(githubToken)).toContain("GitHub token");
     expect(secretTextFindings(credentialUrl)).toContain("credential-bearing URL");
     expect(secretTextFindings(queryUrl)).toContain("secret URL query parameter");
+    expect(secretTextFindings(sessionUrl)).toContain("secret URL query parameter");
+    expect(secretTextFindings(csrfUrl)).toContain("secret URL query parameter");
   });
 
   test("requires a complete key-shaped PEM block instead of a validator marker", () => {
