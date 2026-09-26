@@ -17,6 +17,8 @@ describe("public repository hygiene", () => {
     expect(forbiddenPublicPathReason("profile/Local Storage/leveldb/000003.log")).toBeTruthy();
     expect(forbiddenPublicPathReason("profile/Session Storage/000005.ldb")).toBe("browser profile state tree");
     expect(forbiddenPublicPathReason("profile/WebStorage/QuotaManager")).toBe("browser profile state tree");
+    expect(forbiddenPublicPathReason("profile/Network/Network Persistent State")).toBe("browser profile state tree");
+    expect(forbiddenPublicPathReason("profile/Cache/data_0")).toBe("browser profile state tree");
     expect(forbiddenPublicPathReason("profile/IndexedDB/chatgpt.indexeddb.leveldb/000001.log")).toBeTruthy();
     expect(forbiddenPublicPathReason("profile/Service Worker/Database/000001.log")).toBeTruthy();
     expect(forbiddenPublicPathReason("profile/GPUCache/data_0")).toBe("browser profile state tree");
@@ -76,22 +78,30 @@ describe("public repository hygiene", () => {
       .toContain("Bearer credential");
   });
 
-  test("suppresses the MCP SDK secret query fixture only in its shipped elicitation URL example", () => {
-    const exampleUrl = "https://example.invalid/callback?" + "token=vendor-example-token-value";
+  test("suppresses only the exact MCP SDK elicitation URL fragments", () => {
+    const sessionFragment = "?ses" + "sion=${sessionId}&elici" + "tation=${elicitationId}";
+    const paymentFragment = sessionFragment + "&cartId=${encodeURIComponent(cartId)}";
+    const knownFixtureText = [
+      "url: `http://localhost:${MCP_PORT}/confirm-payment" + paymentFragment + "`",
+      "url: `http://localhost:${MCP_PORT}/api-key-form" + sessionFragment + "`",
+    ].join("\n");
+    const unrelatedPasswordUrl = "https://example.invalid/?pass" + "word=unrelated-private-password";
+
     for (const prefix of ["", "app/"]) {
       for (const moduleFormat of ["cjs", "esm"]) {
-        expect(secretTextFindingsForPath(
-          exampleUrl,
-          `${prefix}node_modules/@modelcontextprotocol/sdk/dist/${moduleFormat}/examples/server/elicitationUrlExample.js`,
-        )).toEqual([]);
+        const path = `${prefix}node_modules/@modelcontextprotocol/sdk/dist/${moduleFormat}/examples/server/elicitationUrlExample.js`;
+        expect(secretTextFindingsForPath(knownFixtureText, path)).toEqual([]);
+        expect(secretTextFindingsForPath(`${knownFixtureText}\n${unrelatedPasswordUrl}`, path))
+          .toContain("secret URL query parameter");
       }
     }
+
     expect(secretTextFindingsForPath(
-      exampleUrl,
+      knownFixtureText,
       "app/node_modules/@modelcontextprotocol/sdk/dist/cjs/examples/server/otherExample.js",
     )).toContain("secret URL query parameter");
     expect(secretTextFindingsForPath(
-      exampleUrl,
+      knownFixtureText,
       "app/node_modules/other-package/dist/cjs/examples/server/elicitationUrlExample.js",
     )).toContain("secret URL query parameter");
   });
