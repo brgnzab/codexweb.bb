@@ -1,0 +1,42 @@
+name: CWC-017 Node Helper Patch
+
+on:
+  push:
+    branches:
+      - cwc-personal
+    paths:
+      - .github/workflows/cwc-017-node-helper-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Wire Council runtime to Node Playwright helper
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('src/council/mcp-main.ts')
+          text = path.read_text(encoding='utf-8')
+          old_import = 'import { PlaywrightCouncilChatDriver } from "./playwright-council-driver";'
+          new_import = 'import { NodePlaywrightCouncilChatDriver } from "./node-playwright-council-driver";'
+          old_ctor = 'new PlaywrightCouncilChatDriver(config.browserHostDescriptorPath)'
+          new_ctor = 'new NodePlaywrightCouncilChatDriver(config.browserHostDescriptorPath)'
+          if old_import not in text or old_ctor not in text:
+              raise SystemExit('Expected CWC-017 wiring anchors were not found')
+          text = text.replace(old_import, new_import, 1).replace(old_ctor, new_ctor, 1)
+          path.write_text(text, encoding='utf-8')
+      - name: Commit wiring
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/council/mcp-main.ts
+          git diff --cached --check
+          git commit -m "fix: use Node helper for Council Playwright"
+          git push origin HEAD:cwc-personal
