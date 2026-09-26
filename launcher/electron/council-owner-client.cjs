@@ -4,6 +4,7 @@ const path = require("node:path");
 
 const OWNER_REQUEST_TIMEOUT_MS = 8_000;
 const OWNER_LONG_REQUEST_TIMEOUT_MS = 20 * 60_000;
+const RUNTIME_UNAVAILABLE_CODE = "COUNCIL_RUNTIME_UNAVAILABLE";
 
 function configRoot() {
   const override = process.env.CODEX_CHATGPT_WEB_HOME?.trim();
@@ -14,9 +15,26 @@ function ownerDescriptorPath() {
   return path.join(configRoot(), "council", "owner-control.json");
 }
 
+function runtimeUnavailableError() {
+  const error = new Error("Council runtime is not configured or running");
+  error.code = RUNTIME_UNAVAILABLE_CODE;
+  return error;
+}
+
+function isRuntimeUnavailable(error) {
+  return error?.code === RUNTIME_UNAVAILABLE_CODE;
+}
+
 function readOwnerDescriptor() {
   const descriptorPath = ownerDescriptorPath();
-  const value = JSON.parse(fs.readFileSync(descriptorPath, "utf8"));
+  let raw;
+  try {
+    raw = fs.readFileSync(descriptorPath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") throw runtimeUnavailableError();
+    throw error;
+  }
+  const value = JSON.parse(raw);
   if (value?.version !== 1 || typeof value.endpoint !== "string" || typeof value.token !== "string" || value.token.length < 32) {
     throw new Error("Council owner-control descriptor is invalid; reconnect the Council runtime");
   }
@@ -78,6 +96,41 @@ async function ownerRequest(operation, body = {}, options = {}) {
   }
 }
 
+async function optionalOwnerRequest(operation, body, fallback, options = {}) {
+  try {
+    return await ownerRequest(operation, body, options);
+  } catch (error) {
+    if (!isRuntimeUnavailable(error)) throw error;
+    return typeof fallback === "function" ? fallback() : structuredClone(fallback);
+  }
+}
+
+function unavailableSupervisorStatus() {
+  return {
+    enabled: false,
+    managerAgentId: null,
+    running: false,
+    intervalMs: 0,
+    nextRunAt: null,
+    lastRunId: null,
+    lastError: null,
+    scheduler: { active: null, queued: 0, completed: 0, failed: 0 },
+  };
+}
+
+function unavailableAutonomyStatus() {
+  return {
+    version: 1,
+    projectRoomId: null,
+    dispatcher: { running: false, activeWorkItemId: null, queued: 0, retryWait: 0, uncertain: 0, failed: 0, completed: 0 },
+    queue: { totalActive: 0, byState: {}, byKind: {} },
+    health: [],
+    breakerOpenCount: 0,
+    budget: null,
+    audit: { count: 0, latestSequence: 0, byTransition: {} },
+  };
+}
+
 async function bindCurrentConversationAsLead({ conversationUrl, projectName }, options = {}) {
   return await ownerRequest("start-lead", {
     conversation_url: assertConversationUrl(conversationUrl),
@@ -89,10 +142,10 @@ async function focusAgentConversation(agentId, options = {}) {
   return await ownerRequest("agent/focus", { agent_id: assertId(agentId, "agentId") }, { ...options, timeoutMs: options.timeoutMs ?? OWNER_LONG_REQUEST_TIMEOUT_MS });
 }
 
-async function listExecutionRuns(options = {}) { return await ownerRequest("execution/runs", {}, options); }
+async function listExecutionRuns(options = {}) { return await optionalOwnerRequest("execution/runs", {}, [], options); }
 async function readExecutionRun(runId, options = {}) { return await ownerRequest("execution/read", { run_id: assertId(runId, "runId") }, options); }
 async function readExecutionEvents(runId, options = {}) { return await ownerRequest("execution/events", { run_id: assertId(runId, "runId") }, options); }
-async function readExecutionReceipts(options = {}) { return await ownerRequest("execution/receipts", {}, options); }
+async function readExecutionReceipts(options = {}) { return await optionalOwnerRequest("execution/receipts", {}, [], options); }
 async function cancelExecutionRun(runId, options = {}) {
   return await ownerRequest("execution/cancel", { run_id: assertId(runId, "runId") }, { ...options, timeoutMs: options.timeoutMs ?? OWNER_LONG_REQUEST_TIMEOUT_MS });
 }
@@ -106,11 +159,11 @@ async function retryExecutionRun(runId, options = {}) {
   return await ownerRequest("execution/retry", { run_id: assertId(runId, "runId") }, { ...options, timeoutMs: options.timeoutMs ?? OWNER_LONG_REQUEST_TIMEOUT_MS });
 }
 
-async function supervisorStatus(options = {}) { return await ownerRequest("supervisor/status", {}, options); }
+async function supervisorStatus(options = {}) { return await optionalOwnerRequest("supervisor/status", {}, unavailableSupervisorStatus, options); }
 async function setSupervisorManager(agentId, options = {}) { return await ownerRequest("supervisor/manager", { agent_id: agentId || null }, options); }
 async function runSupervisorNow(options = {}) { return await ownerRequest("supervisor/run", {}, { ...options, timeoutMs: options.timeoutMs ?? OWNER_LONG_REQUEST_TIMEOUT_MS }); }
-async function listObservations(options = {}) { return await ownerRequest("observations/list", {}, options); }
-async function observationStorageStats(options = {}) { return await ownerRequest("observations/storage", {}, options); }
+async function listObservations(options = {}) { return await optionalOwnerRequest("observations/list", {}, [], options); }
+async function observationStorageStats(options = {}) { return await optionalOwnerRequest("observations/storage", {}, null, options); }
 async function readObservation(runId, options = {}) { return await ownerRequest("observations/read", { run_id: assertId(runId, "runId") }, options); }
 async function deleteObservation(runId, options = {}) { return await ownerRequest("observations/delete", { run_id: assertId(runId, "runId") }, options); }
 async function clearObservations(options = {}) { return await ownerRequest("observations/clear", {}, options); }
@@ -119,21 +172,22 @@ async function readObservationScreenshot(runId, screenshotId, options = {}) {
   return `data:image/png;base64,${buffer.toString("base64")}`;
 }
 
-async function autonomyStatus(options = {}) { return await ownerRequest("autonomy/status", {}, options); }
-async function listExceptionalWork(options = {}) { return await ownerRequest("autonomy/exceptional", {}, options); }
+async function autonomyStatus(options = {}) { return await optionalOwnerRequest("autonomy/status", {}, unavailableAutonomyStatus, options); }
+async function listExceptionalWork(options = {}) { return await optionalOwnerRequest("autonomy/exceptional", {}, [], options); }
 async function cancelExceptionalWork(workItemId, options = {}) { return await ownerRequest("autonomy/cancel", { work_item_id: assertId(workItemId, "workItemId") }, options); }
 async function retryUncertainWork(workItemId, options = {}) { return await ownerRequest("autonomy/retry-uncertain", { work_item_id: assertId(workItemId, "workItemId") }, options); }
 
 async function memoryStats(roomId, options = {}) {
-  return await ownerRequest("memory/stats", roomId ? { room_id: assertId(roomId, "roomId") } : {}, options);
+  const body = roomId ? { room_id: assertId(roomId, "roomId") } : {};
+  return await optionalOwnerRequest("memory/stats", body, { entries: 0, oldestAt: null, newestAt: null }, options);
 }
 async function memorySearch(roomId, query, limit = 20, options = {}) {
   const text = String(query ?? "").trim();
   if (text.length < 2 || text.length > 500) throw new Error("memory query is invalid");
-  return await ownerRequest("memory/search", { room_id: assertId(roomId, "roomId"), query: text, limit: safeLimit(limit, 20, 50) }, options);
+  return await optionalOwnerRequest("memory/search", { room_id: assertId(roomId, "roomId"), query: text, limit: safeLimit(limit, 20, 50) }, [], options);
 }
 async function memoryRecent(roomId, limit = 30, options = {}) {
-  return await ownerRequest("memory/recent", { room_id: assertId(roomId, "roomId"), limit: safeLimit(limit, 30, 100) }, options);
+  return await optionalOwnerRequest("memory/recent", { room_id: assertId(roomId, "roomId"), limit: safeLimit(limit, 30, 100) }, [], options);
 }
 async function clearProjectMemory(roomId, options = {}) {
   return await ownerRequest("memory/clear-project", { room_id: assertId(roomId, "roomId") }, options);
@@ -142,6 +196,7 @@ async function clearProjectMemory(roomId, options = {}) {
 module.exports = {
   OWNER_REQUEST_TIMEOUT_MS,
   OWNER_LONG_REQUEST_TIMEOUT_MS,
+  RUNTIME_UNAVAILABLE_CODE,
   assertConversationUrl,
   autonomyStatus,
   bindCurrentConversationAsLead,
@@ -153,6 +208,7 @@ module.exports = {
   clearObservations,
   clearProjectMemory,
   deleteObservation,
+  isRuntimeUnavailable,
   listExceptionalWork,
   listExecutionRuns,
   listObservations,
