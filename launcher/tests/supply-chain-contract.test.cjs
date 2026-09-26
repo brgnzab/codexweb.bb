@@ -44,15 +44,15 @@ test("recorded Windows build toolchain matches committed launcher lock", () => {
   assert.equal(rootManifest.engines.node, "22.23.2");
 });
 
-test("launcher security floors remain pinned", () => {
+test("launcher security floors remain version-scoped to vulnerable ranges", () => {
   const manifest = JSON.parse(read(launcherRoot, "package.json"));
   assert.equal(manifest.devDependencies.electron, "41.10.7");
   assert.deepEqual(manifest.overrides, {
-    "@xmldom/xmldom": "0.8.15",
-    "brace-expansion": "1.1.18",
-    "fast-uri": "3.1.8",
-    "js-yaml": "4.3.2",
-    "nanoid": "3.3.18",
+    "@xmldom/xmldom@<=0.8.14": "0.8.15",
+    "brace-expansion@<1.1.18": "1.1.18",
+    "fast-uri@<3.1.8": "3.1.8",
+    "js-yaml@>=4.0.0 <4.3.2": "4.3.2",
+    "nanoid@<3.3.18": "3.3.18",
   });
 });
 
