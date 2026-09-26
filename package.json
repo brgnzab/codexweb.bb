@@ -34,6 +34,7 @@
     "launcher:typecheck": "bun run --cwd launcher typecheck",
     "launcher:build": "bun run --cwd launcher build",
     "launcher:test": "bun run --cwd launcher test",
+    "qa:source-ui": "node scripts/qa-cwc-source-ui.mjs",
     "hygiene": "bun run scripts/check-public-hygiene.ts",
     "verify": "bun run scripts/verify.ts"
   },
