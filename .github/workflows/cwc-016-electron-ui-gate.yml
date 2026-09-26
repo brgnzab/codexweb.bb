@@ -4,6 +4,10 @@ on:
   push:
     branches: [cwc-personal]
 
+concurrency:
+  group: cwc-016-electron-ui-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
