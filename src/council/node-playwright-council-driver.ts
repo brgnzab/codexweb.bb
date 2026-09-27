@@ -11,7 +11,7 @@ import {
   CouncilConversationUnavailableError,
   CouncilSurfaceUnavailableError,
 } from "./browser-transport";
-import type { CouncilExecutionPhase } from "./autonomy-errors";
+import { CouncilAutonomyError, type CouncilExecutionPhase } from "./autonomy-errors";
 import { assertChatGptConversationUrl } from "./conversation-registry";
 import type { CouncilObservationHealth } from "./observation-store";
 
@@ -69,6 +69,10 @@ type WireMessage =
 
 function boundedDiagnostic(value: string): string {
   return value.replace(/[\r\n\t]+/g, " ").trim().slice(-2_000);
+}
+
+function helperConnectionError(message: string): CouncilAutonomyError {
+  return new CouncilAutonomyError("CONNECTION_FAILED", boundedDiagnostic(message), true);
 }
 
 function serializeAttachments(attachments?: CouncilPromptAttachment[]): WireAttachment[] | undefined {
@@ -169,7 +173,14 @@ async function stopHelper(child: ChildProcessWithoutNullStreams): Promise<void> 
 }
 
 export class NodePlaywrightCouncilChatDriver implements CouncilPersistentChatDriver {
-  constructor(private readonly descriptorPath: string) {}
+  constructor(
+    private readonly descriptorPath: string,
+    private readonly helperReadyTimeoutMs = 15_000,
+  ) {
+    if (!Number.isFinite(helperReadyTimeoutMs) || helperReadyTimeoutMs < 1 || helperReadyTimeoutMs > 120_000) {
+      throw new Error("Council browser helper readiness timeout is invalid");
+    }
+  }
 
   async resume(input: ResumeInput): Promise<{ answer: string; conversationUrl: string }> {
     const value = await this.invoke("resume", input, {
@@ -260,7 +271,7 @@ export class NodePlaywrightCouncilChatDriver implements CouncilPersistentChatDri
         };
         const fail = (error: Error) => finish(() => reject(error));
         const send = (message: unknown) => {
-          if (child.exitCode !== null || child.signalCode !== null || child.killed) throw new Error("Council browser helper exited before request dispatch");
+          if (child.exitCode !== null || child.signalCode !== null || child.killed) throw helperConnectionError("Council browser helper exited before request dispatch");
           child.stdin.write(`${JSON.stringify(message)}\n`);
         };
 
@@ -274,11 +285,11 @@ export class NodePlaywrightCouncilChatDriver implements CouncilPersistentChatDri
         };
         input.signal?.addEventListener("abort", abortListener, { once: true });
 
-        child.once("error", error => fail(new Error(`Council browser helper process failed: ${error.message}`)));
-        child.stdin.once("error", error => fail(new Error(`Council browser helper input failed: ${error.message}`)));
+        child.once("error", error => fail(helperConnectionError(`Council browser helper process failed: ${error.message}`)));
+        child.stdin.once("error", error => fail(helperConnectionError(`Council browser helper input failed: ${error.message}`)));
         child.once("exit", (code, signal) => {
           if (settled) return;
-          fail(new Error(`Council browser helper exited ${signal ? `from signal ${signal}` : `with status ${code ?? 1}`}${stderrTail ? `: ${stderrTail}` : ""}`));
+          fail(helperConnectionError(`Council browser helper exited ${signal ? `from signal ${signal}` : `with status ${code ?? 1}`}${stderrTail ? `: ${stderrTail}` : ""}`));
         });
 
         output.on("line", line => {
@@ -291,11 +302,20 @@ export class NodePlaywrightCouncilChatDriver implements CouncilPersistentChatDri
           }
           if (message.type === "ready") {
             if (sent) return;
+            if (readyTimer) {
+              clearTimeout(readyTimer);
+              readyTimer = undefined;
+            }
             if (input.signal?.aborted) {
               fail(new DOMException("Council ChatGPT turn aborted", "AbortError"));
               return;
             }
             sent = true;
+            input.onExecution?.({
+              type: "health",
+              health: "healthy",
+              note: "launcher browser helper protocol ready",
+            });
             try {
               send({
                 type: "council",
@@ -324,7 +344,7 @@ export class NodePlaywrightCouncilChatDriver implements CouncilPersistentChatDri
           else if (message.type === "council-error") fail(reconstructError(message));
         });
 
-        readyTimer = setTimeout(() => fail(new Error(`Council browser helper did not become ready${stderrTail ? `: ${stderrTail}` : ""}`)), 15_000);
+        readyTimer = setTimeout(() => fail(helperConnectionError(`Council browser helper did not become ready${stderrTail ? `: ${stderrTail}` : ""}`)), this.helperReadyTimeoutMs);
       });
     } finally {
       output.close();

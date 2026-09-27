@@ -11,7 +11,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(mode: "success" | "conversation-missing" = "success") {
+function fixture(mode: "success" | "conversation-missing" | "delayed-success" = "success") {
   const root = mkdtempSync(join(tmpdir(), "cwc-node-council-helper-"));
   roots.push(root);
   const capturePath = join(root, "request.json");
@@ -34,9 +34,13 @@ function fixture(mode: "success" | "conversation-missing" = "success") {
         send({ type: "council-error", id: message.id, name: "CouncilConversationUnavailableError", message: "missing conversation" });
         return;
       }
-      send({ type: "council-event", id: message.id, observation: { type: "phase", phase: "conversation-ready" } });
-      send({ type: "council-event", id: message.id, observation: { type: "deep-state", state: "THINKING", confidence: 0.75, reason: "helper telemetry" } });
-      send({ type: "council-result", id: message.id, value: { answer: "relay-ok", conversationUrl: "https://chatgpt.com/c/helper-test" } });
+      const complete = () => {
+        send({ type: "council-event", id: message.id, observation: { type: "phase", phase: "conversation-ready" } });
+        send({ type: "council-event", id: message.id, observation: { type: "deep-state", state: "THINKING", confidence: 0.75, reason: "helper telemetry" } });
+        send({ type: "council-result", id: message.id, value: { answer: "relay-ok", conversationUrl: "https://chatgpt.com/c/helper-test" } });
+      };
+      if (${JSON.stringify(mode)} === "delayed-success") setTimeout(complete, 100);
+      else complete();
     });
   `, { mode: 0o700 });
   const descriptorPath = join(root, "launcher.json");
@@ -73,6 +77,7 @@ test("Bun Council runtime delegates persistent conversation work through launche
   expect(result).toEqual({ answer: "relay-ok", conversationUrl: "https://chatgpt.com/c/helper-test" });
   expect(phases).toEqual(["conversation-ready"]);
   expect(observations).toEqual([
+    { type: "health", health: "healthy", note: "launcher browser helper protocol ready" },
     { type: "phase", phase: "conversation-ready" },
     { type: "deep-state", state: "THINKING", confidence: 0.75, reason: "helper telemetry" },
   ]);
@@ -96,4 +101,18 @@ test("Council helper preserves conversation-unavailable semantics for safe resur
     conversationUrl: "https://chatgpt.com/c/original-thread",
     prompt: "resume",
   })).rejects.toBeInstanceOf(CouncilConversationUnavailableError);
+});
+
+
+test("helper readiness deadline ends at the ready handshake rather than the completed turn", async () => {
+  const { descriptorPath } = fixture("delayed-success");
+  const driver = new NodePlaywrightCouncilChatDriver(descriptorPath, 25);
+  const observations: unknown[] = [];
+  const result = await driver.create({
+    surfaceId: "launcher_surface_id_0123456789AB",
+    prompt: "CWC-017 delayed managed turn",
+    onExecution: observation => observations.push(observation),
+  });
+  expect(result).toEqual({ answer: "relay-ok", conversationUrl: "https://chatgpt.com/c/helper-test" });
+  expect(observations[0]).toEqual({ type: "health", health: "healthy", note: "launcher browser helper protocol ready" });
 });

@@ -16,6 +16,13 @@ describe("Council autonomy errors", () => {
     });
   });
 
+  test("maps helper readiness loss to a pre-submit connection failure", () => {
+    expect(classifyCouncilFailure(new Error("Council browser helper did not become ready"))).toEqual({
+      code: "CONNECTION_FAILED",
+      retryableBeforeSubmit: true,
+    });
+  });
+
   test("does not treat an unknown error as retryable", () => {
     expect(classifyCouncilFailure(new Error("unexpected"))).toEqual({
       code: "UNKNOWN",

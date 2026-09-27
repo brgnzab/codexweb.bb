@@ -90,7 +90,7 @@ export function classifyCouncilFailure(error: unknown): CouncilFailureClassifica
   if (/response.*stable completion|response.*stalled|did not create an assistant response/i.test(text)) {
     return { code: "RESPONSE_STALLED", retryableBeforeSubmit: false };
   }
-  if (/network|connection|failed to fetch|ECONN|socket|timed out|timeout/i.test(text)) {
+  if (/network|connection|failed to fetch|ECONN|socket|timed out|timeout|Council browser helper did not become ready|Council browser helper process failed|Council browser helper input failed|Council browser helper exited/i.test(text)) {
     return { code: "CONNECTION_FAILED", retryableBeforeSubmit: true };
   }
   return { code: "UNKNOWN", retryableBeforeSubmit: false };
