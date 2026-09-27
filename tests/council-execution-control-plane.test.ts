@@ -73,6 +73,20 @@ describe("CouncilExecutionControlPlane", () => {
     expect(value.retrySafety).toBe("operator-resolution-required");
   });
 
+  test("terminal pre-submit failure keeps retry safety at the actual submission boundary", () => {
+    const { plane } = fixture();
+    const run = plane.createRun({ traceId: "trace_prompt", agentId: "lead", kind: "turn" });
+    plane.recordPhase(run.runId, "conversation-ready");
+    plane.failRun(run.runId, {
+      failureCode: "UNKNOWN",
+      message: "ChatGPT Council composer did not preserve the complete prompt",
+    });
+    const failed = plane.readRun(run.runId)!;
+    expect(failed.status).toBe("failed");
+    expect(failed.phase).toBe("conversation-ready");
+    expect(failed.retrySafety).toBe("safe-before-submit");
+  });
+
   test("caps events per run but preserves the creation event and latest evidence", () => {
     const { plane, tick } = fixture({ maxEventsPerRun: 4 });
     const run = plane.createRun({ traceId: "trace_1", agentId: "critic", kind: "turn" });
@@ -118,6 +132,7 @@ describe("deriveExecutionRetrySafety", () => {
     expect(deriveExecutionRetrySafety({ phase: "submit-started", status: "uncertain", failureCode: "SUBMISSION_UNCERTAIN" })).toBe("operator-resolution-required");
     expect(deriveExecutionRetrySafety({ status: "completed" })).toBe("forbidden-after-submit");
     expect(deriveExecutionRetrySafety({ status: "waiting-user" })).toBe("forbidden-after-submit");
-    expect(deriveExecutionRetrySafety({ status: "failed", failureCode: "CHATGPT_LIMITED" })).toBe("forbidden-after-submit");
+    expect(deriveExecutionRetrySafety({ phase: "conversation-ready", status: "failed", failureCode: "CHATGPT_LIMITED" })).toBe("safe-before-submit");
+    expect(deriveExecutionRetrySafety({ phase: "conversation-ready", status: "failed", failureCode: "UNKNOWN" })).toBe("safe-before-submit");
   });
 });

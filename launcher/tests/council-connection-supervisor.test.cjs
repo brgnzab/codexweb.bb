@@ -205,3 +205,39 @@ test("typed resync diagnostics reuse the supervisor correlation id and never exp
   assert.equal(resync?.fields?.correlationId, "council-resync-correlation");
   assert.doesNotMatch(JSON.stringify(events), /opaque-secret-cursor/);
 });
+
+
+test("continuation TypeError rehydrates before declaring the shared projection stale", async () => {
+  const events = [];
+  const abortController = new AbortController();
+  let snapshots = 0;
+  let continuations = 0;
+  const envelope = cursor => ({ schemaVersion: 1, state: canonicalState, cursor, generatedAt: canonicalState.generatedAt });
+  const supervisor = new CouncilConnectionSupervisor({
+    retryMs: 100,
+    logger: {
+      info(event, fields) { events.push({ level: "info", event, fields }); },
+      warn(event, fields) { events.push({ level: "warn", event, fields }); },
+    },
+    capabilities: () => unavailableCapabilities,
+    client: {
+      async getSnapshot() {
+        snapshots += 1;
+        if (snapshots === 2) setTimeout(() => abortController.abort(), 0);
+        return envelope(`C${snapshots}`);
+      },
+      async next() {
+        continuations += 1;
+        throw new TypeError("fetch failed");
+      },
+    },
+  });
+
+  await supervisor.run(abortController.signal);
+  assert.equal(snapshots, 2);
+  assert.equal(continuations, 1);
+  assert.equal(supervisor.snapshot().projection.syncState, "live");
+  assert.ok(events.some(item => item.event === "council.shared_stream_reconnect" && item.fields?.reason === "TypeError"));
+  assert.equal(events.some(item => item.event === "council.shared_stream_interrupted"), false);
+  assert.equal(events.some(item => item.event === "council.shared_projection_stale"), false);
+});

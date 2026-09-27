@@ -358,8 +358,16 @@ class CouncilConnectionSupervisor {
         throw new Error("Council sync continuation frame is invalid");
       } catch (error) {
         if (signal.aborted) break;
-        this.diagnostic("warn", "council.shared_stream_interrupted", { reason: safeErrorKind(error) });
-        this.markFailure("STREAM_INTERRUPTED");
+        const reason = safeErrorKind(error);
+        // A loopback long-poll can be interrupted while the authoritative Council runtime remains
+        // healthy. Rehydrate before marking the last-good projection stale; this prevents a
+        // transient fetch TypeError from manufacturing STREAM_INTERRUPTED state.
+        this.diagnostic("info", "council.shared_stream_reconnect", { reason });
+        await this.hydrateOnce(signal);
+        if (signal.aborted) break;
+        if (this.runtime.projection.syncState !== "live") {
+          this.diagnostic("warn", "council.shared_stream_interrupted", { reason });
+        }
         await this.sleep(this.retryMs, signal);
       }
     }

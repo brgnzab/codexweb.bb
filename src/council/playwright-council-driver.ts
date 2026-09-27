@@ -68,6 +68,29 @@ async function composerText(composer: Locator): Promise<string> {
   });
 }
 
+function councilPromptCodeUnitEquivalent(expected: string, observed: string, index: number): boolean {
+  const expectedUnit = expected[index];
+  const observedUnit = observed[index];
+  if (expectedUnit === observedUnit) return true;
+  if (expectedUnit !== " " || observedUnit !== "\u00A0") return false;
+  return expected[index - 1] === " " || expected[index + 1] === " ";
+}
+
+export function councilPromptTextEquivalent(expected: string, observed: string): boolean {
+  if (expected.length !== observed.length) return false;
+  for (let index = 0; index < expected.length; index += 1) {
+    if (!councilPromptCodeUnitEquivalent(expected, observed, index)) return false;
+  }
+  return true;
+}
+
+export function councilPromptEquivalentPrefixLength(expected: string, observed: string): number {
+  const length = Math.min(expected.length, observed.length);
+  let index = 0;
+  while (index < length && councilPromptCodeUnitEquivalent(expected, observed, index)) index += 1;
+  return index;
+}
+
 function selectedCouncilConnector(composer: Locator): Locator {
   return composer
     .locator('[data-id^="plugin:"][data-keyword]')
@@ -160,15 +183,14 @@ async function attachExactPrompt(
   do {
     abortIfNeeded(signal);
     observed = await composerText(composer);
-    if (observed === prompt) {
+    if (councilPromptTextEquivalent(prompt, observed)) {
       if (connectorSelected && !await councilConnectorIsSelected(composer)) throw new Error("CodexWeb Council connector selection disappeared while attaching the prompt");
       phase(onPhase, onExecution, "prompt-attached");
       return composer;
     }
     await new Promise(resolve => setTimeout(resolve, 50));
   } while (Date.now() < deadline);
-  let prefix = 0;
-  while (prefix < prompt.length && prompt[prefix] === observed[prefix]) prefix += 1;
+  const prefix = councilPromptEquivalentPrefixLength(prompt, observed);
   throw new Error(`ChatGPT Council composer did not preserve the complete prompt (expectedChars=${prompt.length}, actualChars=${observed.length}, commonPrefixChars=${prefix})`);
 }
 

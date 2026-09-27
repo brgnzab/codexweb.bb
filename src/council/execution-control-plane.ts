@@ -68,11 +68,6 @@ export interface CouncilExecutionRetryInput {
   failureCode?: CouncilFailureCode;
 }
 
-const SAFE_PRE_SUBMIT_FAILURES = new Set<CouncilFailureCode>([
-  "CAPACITY_BUSY",
-  "SURFACE_UNAVAILABLE",
-  "CONNECTION_FAILED",
-]);
 const TERMINAL_RUN_STATUSES = new Set<CouncilExecutionRunStatus>(["completed", "failed", "aborted", "uncertain"]);
 const ACTIVE_DEEP_STATES = new Set<CouncilChatGptState>([
   "QUEUED",
@@ -91,8 +86,9 @@ export function deriveExecutionRetrySafety(input: CouncilExecutionRetryInput): C
   if (input.status === "uncertain" || input.failureCode === "SUBMISSION_UNCERTAIN") return "operator-resolution-required";
   if (input.phase && councilPhaseReached(input.phase, "submit-started")) return "forbidden-after-submit";
   if (input.status === "completed" || input.status === "waiting-user") return "forbidden-after-submit";
-  if (input.failureCode) return SAFE_PRE_SUBMIT_FAILURES.has(input.failureCode) ? "safe-before-submit" : "forbidden-after-submit";
-  if (input.status === "failed") return "forbidden-after-submit";
+  // Before submit-started there is no possible duplicate external ChatGPT message. Failure
+  // category may affect whether an automated policy chooses to retry, but it must not rewrite
+  // the external-submission safety boundary itself.
   return "safe-before-submit";
 }
 
