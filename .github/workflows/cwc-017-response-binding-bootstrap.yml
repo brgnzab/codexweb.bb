@@ -59,23 +59,27 @@ jobs:
           if count != 1:
               raise SystemExit(f"expected one parent guard, replaced {count}")
 
-          old_transient = '''            let matches = false;
-            if (replacement && identity && user) {'''
-          new_transient = '''            // Activity may temporarily unmount the bound assistant group before its persisted
-            // replacement appears. With no competing new turn, preserve the logical binding and
-            // let positive generation liveness/grace absorb that renderer transition.
-            if (!identity && newUsers.length === 0) return { binding, state };
+          indent = " " * 12
+          needle = indent + "let matches = false;\n" + indent + "if (replacement && identity && user) {"
+          injected = (
+              indent + "// Activity may temporarily unmount the bound assistant group before its persisted\n"
+              + indent + "// replacement appears. With no competing new turn, preserve the logical binding and\n"
+              + indent + "// let positive generation liveness/grace absorb that renderer transition.\n"
+              + indent + "if (!identity && newUsers.length === 0) return { binding, state };\n\n"
+              + needle
+          )
+          if text.count(needle) != 1:
+              raise SystemExit(f"expected one transient-binding insertion point, found {text.count(needle)}")
+          text = text.replace(needle, injected)
 
-            let matches = false;
-            if (replacement && identity && user) {'''
-          if text.count(old_transient) != 1:
-              raise SystemExit(f"expected one transient-binding insertion point, found {text.count(old_transient)}")
-          text = text.replace(old_transient, new_transient)
-
-          workflow_required = '''              ".github/workflows/cwc-017-response-binding-repair.yml",\n'''
-          if text.count(workflow_required) != 1:
-              raise SystemExit(f"expected one patch-shape workflow entry, found {text.count(workflow_required)}")
-          text = text.replace(workflow_required, "")
+          required_at = text.find("          required = {")
+          if required_at < 0:
+              raise SystemExit("patch-shape required block not found")
+          prefix, suffix = text[:required_at], text[required_at:]
+          workflow_line = '              ".github/workflows/cwc-017-response-binding-repair.yml",\n'
+          if suffix.count(workflow_line) != 1:
+              raise SystemExit(f"expected one workflow entry in required block, found {suffix.count(workflow_line)}")
+          text = prefix + suffix.replace(workflow_line, "", 1)
 
           p.write_text(text, encoding='utf-8')
           subprocess.run(["git", "diff", "--check"], check=True)
