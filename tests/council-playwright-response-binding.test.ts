@@ -5,7 +5,7 @@ import {
   CHATGPT_USER_TURN_SELECTOR,
   chatGptAssistantTurnSelector,
 } from "../src/chatgpt-session";
-import { councilNewTurnIdentity, councilReboundTurnIdentity } from "../src/council/playwright-council-driver";
+import { councilAssistantCandidateIndex, councilNewTurnIdentity, councilReboundTurnIdentity } from "../src/council/playwright-council-driver";
 import { deriveCouncilChatGptState } from "../src/council/chatgpt-deep-state";
 
 describe("Council ChatGPT response binding", () => {
@@ -16,6 +16,13 @@ describe("Council ChatGPT response binding", () => {
     expect(CHATGPT_COMPLETION_ACTION_SELECTOR).toContain("turn-action-controls");
     expect(chatGptAssistantTurnSelector("group:assistant:abc")).toContain('data-turn-key="abc"');
     expect(chatGptAssistantTurnSelector("conversation-turn-7")).toContain('data-testid="conversation-turn-7"');
+  });
+
+  test("logical identity resolves only semantic assistant candidates", () => {
+    expect(councilAssistantCandidateIndex("conversation-turn-7", ["conversation-turn-6", "conversation-turn-7"])).toBe(1);
+    expect(councilAssistantCandidateIndex("conversation-turn-7", ["conversation-turn-6"])).toBeUndefined();
+    expect(() => councilAssistantCandidateIndex("conversation-turn-7", ["conversation-turn-7", "conversation-turn-7"]))
+      .toThrow("2 semantic assistant DOM candidates");
   });
 
   test("logical assistant identity rejects competing responses and permits one replacement", () => {

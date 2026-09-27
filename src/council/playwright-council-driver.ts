@@ -6,7 +6,6 @@ import {
   CHATGPT_STOP_BUTTON_SELECTOR,
   CHATGPT_USER_TURN_SELECTOR,
   assertAuthenticatedChatGptPage,
-  chatGptAssistantTurnSelector,
 } from "../chatgpt-session";
 import { connectLauncherBrowserHost } from "../launcher-browser-host";
 import type { CouncilExecutionObserver, CouncilExecutionPhaseObserver, CouncilPersistentChatDriver, CouncilPromptAttachment } from "./browser-transport";
@@ -225,8 +224,35 @@ interface CouncilTurnDomState {
 
 interface CouncilResponseBinding {
   identity: string;
-  locator: Locator;
   acceptedTurnIdentities: readonly string[];
+}
+
+export function councilAssistantCandidateIndex(
+  identity: string,
+  candidateIdentities: readonly (string | undefined)[],
+): number | undefined {
+  const matches: number[] = [];
+  candidateIdentities.forEach((candidate, index) => {
+    if (candidate === identity) matches.push(index);
+  });
+  if (matches.length > 1) {
+    throw new Error(`ChatGPT exposed ${matches.length} semantic assistant DOM candidates for logical turn ${identity}`);
+  }
+  return matches[0];
+}
+
+async function resolveCouncilAssistantTurn(page: Page, identity: string): Promise<Locator | undefined> {
+  const candidates = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
+  const identities = await candidates.evaluateAll(elements => elements.map(element => {
+    const groupKey = element.getAttribute("data-turn-key");
+    if (groupKey) return `group:assistant:${groupKey}`;
+    return element.getAttribute("data-turn-id")
+      ?? element.getAttribute("data-testid")
+      ?? element.closest("[data-turn-id-container]")?.getAttribute("data-turn-id-container")
+      ?? undefined;
+  }));
+  const index = councilAssistantCandidateIndex(identity, identities);
+  return index === undefined ? undefined : candidates.nth(index);
 }
 
 export function councilNewTurnIdentity(initial: readonly string[], current: readonly string[]): string | undefined {
@@ -298,19 +324,23 @@ async function reconcileCouncilResponseBinding(
   prompt: string,
   binding: CouncilResponseBinding | undefined,
   acceptedUserIdentity?: string,
-): Promise<{ binding?: CouncilResponseBinding; state: CouncilTurnDomState }> {
+): Promise<{ binding?: CouncilResponseBinding; state: CouncilTurnDomState; responseTurn?: Locator }> {
   const state = await councilTurnDomState(page);
   if (!binding) {
     const identity = councilNewTurnIdentity(baseline.turnIdentities, state.responseIdentities);
+    const responseTurn = identity ? await resolveCouncilAssistantTurn(page, identity) : undefined;
     return {
-      binding: identity ? { identity, locator: page.locator(chatGptAssistantTurnSelector(identity)), acceptedTurnIdentities: state.turnIdentities } : undefined,
+      binding: identity ? { identity, acceptedTurnIdentities: state.turnIdentities } : undefined,
       state,
+      responseTurn,
     };
   }
 
-  const boundCount = await binding.locator.count();
-  if (boundCount === 1) return { binding, state };
-  if (boundCount > 1) throw new Error(`ChatGPT exposed ${boundCount} DOM nodes for the bound assistant turn`);
+  // Resolve the logical identity only across nodes that already satisfy the semantic assistant-turn
+  // selector. A legacy ChatGPT turn may mirror the same id through data-testid/data-turn-id/
+  // data-turn-id-container on nested nodes; those attribute aliases are not separate responses.
+  const boundTurn = await resolveCouncilAssistantTurn(page, binding.identity);
+  if (boundTurn) return { binding, state, responseTurn: boundTurn };
 
   const acceptedTurns = new Set(binding.acceptedTurnIdentities);
   const identity = councilReboundTurnIdentity(baseline.turnIdentities, binding.identity, state.responseIdentities);
@@ -320,12 +350,12 @@ async function reconcileCouncilResponseBinding(
 
   // Activity may temporarily unmount the accepted assistant group before the replacement
   // appears. With no competing user evidence, keep waiting on the same logical turn.
-  if (!user) return { binding, state };
+  if (!user) return { binding, state, responseTurn: undefined };
   const userMatches = acceptedUserIdentity
     ? user === acceptedUserIdentity
     : await userGroupMatchesSubmittedPrompt(page, user, prompt);
   if (!userMatches) throw new Error("ChatGPT opened another user turn while the bound assistant response was detached");
-  if (!identity) return { binding, state };
+  if (!identity) return { binding, state, responseTurn: undefined };
 
   const replacement = identity
     && binding.identity.startsWith("group:assistant:")
@@ -335,8 +365,9 @@ async function reconcileCouncilResponseBinding(
     && state.turnIdentities.every(turn => baseline.turnIdentities.includes(turn) || acceptedTurns.has(turn) || turn === user || turn === identity);
   if (!replacement) throw new Error("ChatGPT assistant response rebind did not match the accepted submitted turn");
   return {
-    binding: { identity, locator: page.locator(chatGptAssistantTurnSelector(identity)), acceptedTurnIdentities: state.turnIdentities },
+    binding: { identity, acceptedTurnIdentities: state.turnIdentities },
     state,
+    responseTurn: await resolveCouncilAssistantTurn(page, identity),
   };
 }
 
@@ -446,7 +477,7 @@ async function sendAndWait(
     if (newUsers.length > 1) throw new Error(`ChatGPT exposed ${newUsers.length} new user turns for one submitted message`);
     acceptedUserIdentity ??= newUsers[0];
     const identity = councilNewTurnIdentity(baseline.turnIdentities, state.responseIdentities);
-    if (identity) responseBinding = { identity, locator: page.locator(chatGptAssistantTurnSelector(identity)), acceptedTurnIdentities: state.turnIdentities };
+    if (identity) responseBinding = { identity, acceptedTurnIdentities: state.turnIdentities };
     const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count();
     if (acceptedUserIdentity || responseBinding || running > 0) {
       submissionObserved = true;
@@ -474,8 +505,9 @@ async function sendAndWait(
     const now = Date.now();
     const reconciled = await reconcileCouncilResponseBinding(page, baseline, prompt, responseBinding, acceptedUserIdentity);
     responseBinding = reconciled.binding;
-    const present = Boolean(responseBinding && await responseBinding.locator.count() === 1);
-    const observation = present ? await currentResponseObservation(responseBinding!.locator) : { text: "", completion: false };
+    const responseTurn = reconciled.responseTurn;
+    const present = Boolean(responseTurn);
+    const observation = responseTurn ? await currentResponseObservation(responseTurn) : { text: "", completion: false };
     const text = observation.text;
     if (text !== lastText) {
       lastText = text;
