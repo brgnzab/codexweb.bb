@@ -33,21 +33,33 @@ describe("Council ChatGPT response binding", () => {
     expect(councilReboundTurnIdentity(baseline, "group:assistant:temp", [...baseline, "group:assistant:persisted"])).toBe("group:assistant:persisted");
   });
 
-  test("reads a non-markdown assistant body when an empty markdown placeholder precedes completion controls", () => {
+  test("reads a zero-box grouped assistant body after a user bubble and empty markdown placeholder", () => {
     const originalStyle = globalThis.getComputedStyle;
     const originalNode = globalThis.Node;
-    (globalThis as any).getComputedStyle = (element: { contents?: boolean }) => ({ display: element.contents ? "contents" : "block", visibility: "visible" });
+    (globalThis as any).getComputedStyle = (element: { contents?: boolean; hidden?: boolean }) => ({
+      display: element.contents ? "contents" : "block", visibility: element.hidden ? "hidden" : "visible", opacity: "1",
+    });
     (globalThis as any).Node = { DOCUMENT_POSITION_FOLLOWING: 4 };
     try {
+      const marker = {
+        contains: () => false,
+        compareDocumentPosition: (candidate: { user?: boolean }) => candidate.user ? 0 : 4,
+      };
       const unit = (assistant: boolean) => ({
-        querySelector: (selector: string) => selector.includes('data-conversation-role="assistant"') && assistant ? {} : null,
+        // The same grouped unit contains a user bubble and the assistant role.
+        querySelector: (selector: string) => selector.includes("data-user-message-bubble") ? {} : null,
+        querySelectorAll: () => assistant ? [marker] : [],
         contains: () => true,
       });
-      const candidate = (text: string, assistant: boolean) => ({
+      const candidate = (text: string, assistant: boolean, user = false) => ({
         innerText: text,
+        textContent: text,
+        user,
         isConnected: true,
-        getBoundingClientRect: () => ({ width: 100, height: 20 }),
-        closest: (selector: string) => selector === "[data-content-search-unit-key]" ? unit(assistant) : null,
+        parentElement: null,
+        getBoundingClientRect: () => ({ width: 0, height: 0 }),
+        closest: (selector: string) => selector === "[data-content-search-unit-key]" ? unit(assistant)
+          : selector === "[data-user-message-bubble]" && user ? {} : null,
         compareDocumentPosition: () => 4,
       });
       const placeholder = candidate("", true);
@@ -58,7 +70,11 @@ describe("Council ChatGPT response binding", () => {
         getBoundingClientRect: () => ({ width: 0, height: 0 }),
         querySelectorAll: () => [candidate("final answer", true)],
       };
-      const userText = candidate("submitted prompt", false);
+      const hiddenContentsAnswer = {
+        ...contentsAnswer,
+        querySelectorAll: () => [{ ...candidate("hidden answer", true), hidden: true }],
+      };
+      const userText = candidate("submitted prompt", true, true);
       const action = candidate("Copy", true);
       const root = (body: typeof answer | undefined, roleBody?: typeof answer) => ({
         hasAttribute: (name: string) => name === "data-turn-key",
@@ -76,6 +92,8 @@ describe("Council ChatGPT response binding", () => {
         .toEqual({ text: "final answer", completion: true });
       expect(councilResponseObservation(root(undefined, contentsAnswer) as unknown as Element, CHATGPT_COMPLETION_ACTION_SELECTOR))
         .toEqual({ text: "final answer", completion: true });
+      expect(councilResponseObservation(root(undefined, hiddenContentsAnswer) as unknown as Element, CHATGPT_COMPLETION_ACTION_SELECTOR))
+        .toEqual({ text: "", completion: true });
       expect(councilResponseObservation(root(undefined) as unknown as Element, CHATGPT_COMPLETION_ACTION_SELECTOR))
         .toEqual({ text: "", completion: true });
     } finally {

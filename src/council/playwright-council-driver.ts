@@ -373,19 +373,23 @@ async function reconcileCouncilResponseBinding(
 
 export function councilResponseObservation(element: Element, completionSelector: string): { text: string; completion: boolean } {
     const root = element as HTMLElement;
+    // A managed Electron WebContents may have zero layout bounds while its DOM is still
+    // rendered and readable. Geometry must not decide whether the answer exists.
+    const cssVisible = (candidate: HTMLElement) => {
+      if (!candidate.isConnected) return false;
+      for (let node: HTMLElement | null = candidate; node; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.opacity === "0") return false;
+        if (node === root) break;
+      }
+      return true;
+    };
     const rendered = (candidate: HTMLElement) => {
-      const style = getComputedStyle(candidate);
-      const bounds = candidate.getBoundingClientRect();
-      if (!candidate.isConnected || style.display === "none" || style.visibility === "hidden") return false;
-      if (bounds.width > 0 && bounds.height > 0) return true;
-      if (style.display !== "contents") return false;
-      // Grouped message bodies can use display: contents and have no box of their own.
-      let checked = 0;
+      if (!cssVisible(candidate)) return false;
+      if (getComputedStyle(candidate).display !== "contents") return true;
+      // A display: contents body has no box. Require a visible, text-bearing descendant.
       for (const child of candidate.querySelectorAll<HTMLElement>("*")) {
-        if (++checked > 64) break;
-        const childStyle = getComputedStyle(child);
-        const childBounds = child.getBoundingClientRect();
-        if (childStyle.display !== "none" && childStyle.visibility !== "hidden" && childBounds.width > 0 && childBounds.height > 0) return true;
+        if (child.textContent?.trim() && getComputedStyle(child).display !== "contents" && cssVisible(child)) return true;
       }
       return false;
     };
@@ -396,10 +400,14 @@ export function councilResponseObservation(element: Element, completionSelector:
       .filter((node): node is HTMLElement => Boolean(node));
     const assistantContent = (candidate: HTMLElement) => {
       if (!root.hasAttribute("data-turn-key")) return true;
+      if (candidate.closest('[data-user-message-bubble]')) return false;
       const unit = candidate.closest("[data-content-search-unit-key]");
-      return unit
-        ? Boolean(unit.querySelector('[data-conversation-role="assistant"]')) && !unit.querySelector('[data-user-message-bubble]')
-        : activityContainers.some(container => container.contains(candidate));
+      if (!unit) return activityContainers.some(container => container.contains(candidate));
+      // A grouped content unit can contain both the submitted user bubble and the
+      // assistant role marker. Only content after that marker belongs to the answer.
+      return [...unit.querySelectorAll<HTMLElement>('[data-conversation-role="assistant"], [data-chatgpt-agent-turn-start]')]
+        .some(marker => marker.contains(candidate)
+          || Boolean(marker.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING));
     };
     const visibleAnswerCandidates = (candidates: HTMLElement[]) => candidates
       .filter(candidate => candidate.closest("[data-streaming-response-status]") === null)
@@ -440,7 +448,8 @@ async function currentResponseObservation(responseTurn: Locator): Promise<{ text
 }
 
 async function councilResponseStructureDiagnostic(page: Page, responseTurn?: Locator): Promise<string> {
-  const semanticCandidates = await page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR).filter({ visible: true }).count().catch(() => -1);
+  const semanticCandidates = await page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR).count().catch(() => -1);
+  const layoutVisibleCandidates = await page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR).filter({ visible: true }).count().catch(() => -1);
   const bound = responseTurn ? await responseTurn.evaluate((element, completionSelector) => {
     const root = element as HTMLElement;
     const capped = (value: number) => Math.min(value, 1_000_000);
@@ -457,7 +466,7 @@ async function councilResponseStructureDiagnostic(page: Page, responseTurn?: Loc
       htmlChars: capped(root.innerHTML.length),
     };
   }, CHATGPT_COMPLETION_ACTION_SELECTOR).catch(() => undefined) : undefined;
-  return `semanticCandidates=${semanticCandidates},boundCandidate=${Number(Boolean(bound))}`
+  return `semanticCandidates=${semanticCandidates},layoutVisibleCandidates=${layoutVisibleCandidates},boundCandidate=${Number(Boolean(bound))}`
     + (bound ? `,${Object.entries(bound).map(([key, value]) => `${key}=${value}`).join(",")}` : "");
 }
 
