@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CouncilAgentManager } from "../src/council/agent-manager";
+import { parseCouncilActionFooter } from "../src/council/browser-action-parser";
 import { ManagedAgentStateStore } from "../src/council/managed-agent-state";
 
 class FakeCouncil {
@@ -56,6 +57,64 @@ class FakeRegistry {
 }
 
 describe("CouncilAgentManager", () => {
+  test("routes six parsed relay action footers through the bound peer wake queue", async () => {
+    const root = mkdtempSync(join(tmpdir(), "manager-relay-"));
+    try {
+      const managed = new ManagedAgentStateStore(join(root, "agents.json"));
+      const council = new FakeCouncil();
+      const registry = new FakeRegistry();
+      const marker = "CWC017-G9-UNIQUE-1234";
+      const pending: any[] = [];
+      const prompts: any[] = [];
+      const steps = [
+        { agent: "lead", token: "B1", next: "relay-b", nextToken: "A2" },
+        { agent: "relay-b", token: "A2", next: "lead", nextToken: "B2" },
+        { agent: "lead", token: "B2", next: "relay-b", nextToken: "A3" },
+        { agent: "relay-b", token: "A3", next: "lead", nextToken: "B3" },
+        { agent: "lead", token: "B3", next: "relay-b", nextToken: "acknowledgement" },
+        { agent: "relay-b", token: "acknowledgement" },
+      ];
+      let index = 0;
+      const transport = {
+        async run(input: any) {
+          prompts.push(input);
+          const step = steps[index++];
+          expect(step).toBeDefined();
+          expect(input.agentId).toBe(step!.agent);
+          expect(input.conversationUrl).toBe(`https://chatgpt.com/c/${step!.agent}`);
+          const body = step!.token === "acknowledgement" ? "acknowledged" : `${marker}:${step!.token}`;
+          const actions: any[] = [{ type: "SAY", room_id: "core", body }];
+          if (step!.next) actions.push({ type: "WAKE", room_id: "core", target_agent_id: step!.next, reason: `Continue public marker relay; emit ${marker}:${step!.nextToken}` });
+          else actions.push({ type: "SLEEP" });
+          return { answer: `${body}\n<COUNCIL_ACTIONS version="1">\n${JSON.stringify({ actions })}\n</COUNCIL_ACTIONS>`, conversationUrl: input.conversationUrl, resumed: true };
+        },
+        async release() { return true; },
+      };
+      const manager = new CouncilAgentManager({
+        council: council as any, managed, registry: registry as any, transport: transport as any,
+        parseAnswer: parseCouncilActionFooter, projectMission: "Relay", defaultRoomId: "core",
+        effectSink: { async deliverWake(wake) { pending.push(wake); }, async spawn() { throw new Error("third agent is forbidden"); } },
+      });
+      manager.registerLead({ id: "lead", name: "Lead", role: "Lead", mandate: "Coordinate", permissions: ["wake"] });
+      manager.registerLead({ id: "relay-b", name: "Peer", role: "Peer", mandate: "Relay", permissions: ["wake"] });
+      managed.bindConversation("lead", "https://chatgpt.com/c/lead");
+      managed.bindConversation("relay-b", "https://chatgpt.com/c/relay-b");
+      const ownerWake = council.wake({ targetAgentId: "lead", roomId: "core", reason: `COUNCIL_RELAY:${marker}:\nController task for the bound Lead. Relay peer agent ID: relay-b. Use Council actions to hand off; do not create another peer or use another conversation.\n${["A1", "B1", "A2", "B2", "A3", "B3"].map(step => `${marker}:${step}`).join(" ")}` });
+      await manager.executeWakeEvent(ownerWake as any);
+      expect(prompts[0].prompt).toContain(`${marker}:B1`);
+      expect(prompts[0].prompt).toContain('"target_agent_id":"relay-b"');
+      while (pending.length) await manager.executeWakeEvent(pending.shift());
+      expect(index).toBe(6);
+      expect(council.state.messages.map((message: any) => message.body)).toEqual([
+        `${marker}:B1`, `${marker}:A2`, `${marker}:B2`, `${marker}:A3`, `${marker}:B3`, "acknowledged",
+      ]);
+      expect(council.state.wakes.map((wake: any) => wake.targetAgentId)).toEqual(["lead", "relay-b", "lead", "relay-b", "lead", "relay-b"]);
+      expect(council.state.wakes.every((wake: any) => wake.status === "replied")).toBe(true);
+      expect(managed.list().map(agent => agent.id).sort()).toEqual(["lead", "relay-b"]);
+      expect(prompts[1].prompt).toContain("public test marker");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   test("lead spawns a child, records its speech, persists conversation and releases the surface", async () => {
     const root = mkdtempSync(join(tmpdir(), "manager-"));
     try {

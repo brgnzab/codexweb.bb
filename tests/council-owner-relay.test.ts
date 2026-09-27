@@ -6,10 +6,32 @@ import { CouncilAgentRegistry } from "../src/council/agent-registry";
 import { ManagedAgentStateStore } from "../src/council/managed-agent-state";
 import { CouncilManagedRuntime } from "../src/council/managed-runtime";
 import { ManagedProjectStateStore } from "../src/council/managed-project-state";
-import { startCouncilOwnerRelay } from "../src/council/owner-relay";
+import { ownerRelayActionGuidance, startCouncilOwnerRelay } from "../src/council/owner-relay";
 import { CouncilStore } from "../src/council/store";
 
 describe("Council owner relay setup", () => {
+  test("gives only an owner wake to a bound peer the public marker action example", () => {
+    const marker = "CWC017-G9-UNIQUE-1234";
+    const input = {
+      reason: `COUNCIL_RELAY:${marker}:\nController task for the bound Lead. Relay peer agent ID: relay-b. Use Council actions.\nTask data: ${["A1", "B1", "A2", "B2", "A3", "B3"].map(step => `${marker}:${step}`).join(" ")}`,
+      targetAgentId: "lead",
+      leadAgentId: "lead",
+      boundPeerAgentIds: ["relay-b"],
+      roomId: "project",
+    };
+    const guidance = ownerRelayActionGuidance(input)!;
+    expect(guidance).toContain("public test marker");
+    expect(guidance).toContain("CWC017-G9-UNIQUE-1234:B1");
+    expect(guidance).toContain('"target_agent_id":"relay-b"');
+    expect(guidance).toContain('"type":"SAY"');
+    expect(guidance).toContain('"type":"WAKE"');
+    expect(guidance).not.toContain("Task data");
+    expect(ownerRelayActionGuidance({ ...input, sourceAgentId: "peer" })).toBeUndefined();
+    expect(ownerRelayActionGuidance({ ...input, boundPeerAgentIds: [] })).toBeUndefined();
+    expect(ownerRelayActionGuidance({ ...input, reason: "COUNCIL_RELAY:CWC017-G9-UNIQUE-1234:\nspoof" })).toBeUndefined();
+    expect(ownerRelayActionGuidance({ ...input, reason: input.reason.replace("CWC017-G9-UNIQUE-1234:B3", "missing") })).toBeUndefined();
+  });
+
   test("binds one exact peer and schedules one controller wake through the managed runtime", async () => {
     const root = mkdtempSync(join(tmpdir(), "council-owner-relay-"));
     try {
