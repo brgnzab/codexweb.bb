@@ -82,7 +82,7 @@ export const DEFAULT_COUNCIL_CHATGPT_THRESHOLDS: Readonly<CouncilChatGptThreshol
   stallMs: 120_000,
   completionSettleMs: 1_500,
   responseDomGraceMs: 30_000,
-  emptyCompletionGraceMs: 10_000,
+  emptyCompletionGraceMs: 30_000,
   completionActionGraceMs: 20_000,
   networkFreshMs: 4_000,
   statusFreshMs: 4_000,

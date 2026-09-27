@@ -53,6 +53,22 @@ test("completion requires the same stable signature across the settle window", (
   assert.ok(settled.evidence.includes("completion_stable"));
 });
 
+test("early completion controls wait for a late assistant body without accepting an empty answer", () => {
+  const empty = { ...base, responsePresent: true, completionActionVisible: true };
+  const first = deriveCouncilChatGptState(empty, { submittedAt: 1_000 }, {}, 1_000);
+  const stillEmpty = deriveCouncilChatGptState(empty, { submittedAt: 1_000 }, first, 21_000);
+  assert.notEqual(stillEmpty.state, "COMPLETED");
+  assert.notEqual(stillEmpty.state, "DOM_DRIFT");
+  const populated = { ...empty, assistantText: "late answer" };
+  const settling = deriveCouncilChatGptState(populated, { submittedAt: 1_000 }, stillEmpty, 22_000);
+  assert.equal(settling.state, "COMPLETING");
+  const completed = deriveCouncilChatGptState(populated, { submittedAt: 1_000 }, settling, 24_000);
+  assert.equal(completed.state, "COMPLETED");
+  const trulyEmpty = deriveCouncilChatGptState(empty, { submittedAt: 1_000 }, stillEmpty, 31_001);
+  assert.equal(trulyEmpty.state, "DOM_DRIFT");
+  assert.equal(councilChatGptMayRetry(trulyEmpty), false);
+});
+
 test("response DOM disappearing after it was observed becomes DOM_DRIFT only after grace", () => {
   const now = 200_000;
   const first = deriveCouncilChatGptState(

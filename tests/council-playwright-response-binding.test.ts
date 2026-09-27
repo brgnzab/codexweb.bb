@@ -36,11 +36,12 @@ describe("Council ChatGPT response binding", () => {
   test("reads a non-markdown assistant body when an empty markdown placeholder precedes completion controls", () => {
     const originalStyle = globalThis.getComputedStyle;
     const originalNode = globalThis.Node;
-    (globalThis as any).getComputedStyle = () => ({ display: "block", visibility: "visible" });
+    (globalThis as any).getComputedStyle = (element: { contents?: boolean }) => ({ display: element.contents ? "contents" : "block", visibility: "visible" });
     (globalThis as any).Node = { DOCUMENT_POSITION_FOLLOWING: 4 };
     try {
       const unit = (assistant: boolean) => ({
         querySelector: (selector: string) => selector.includes('data-conversation-role="assistant"') && assistant ? {} : null,
+        contains: () => true,
       });
       const candidate = (text: string, assistant: boolean) => ({
         innerText: text,
@@ -51,17 +52,29 @@ describe("Council ChatGPT response binding", () => {
       });
       const placeholder = candidate("", true);
       const answer = candidate("final answer", true);
+      const contentsAnswer = {
+        ...candidate("final answer", true),
+        contents: true,
+        getBoundingClientRect: () => ({ width: 0, height: 0 }),
+        querySelectorAll: () => [candidate("final answer", true)],
+      };
       const userText = candidate("submitted prompt", false);
       const action = candidate("Copy", true);
-      const root = (body: typeof answer | undefined) => ({
+      const root = (body: typeof answer | undefined, roleBody?: typeof answer) => ({
         hasAttribute: (name: string) => name === "data-turn-key",
         querySelectorAll: (selector: string) => selector.includes("data-chatgpt-agent-turn-start") ? []
           : selector.includes(".markdown") ? [placeholder]
           : selector.includes("data-chatgpt-selection-message-id") ? []
           : selector.includes(".puik-root.not-markdown") ? [userText, ...(body ? [body] : [])]
+          : selector === '[data-conversation-role="assistant"]' && roleBody
+            ? [{ tagName: "H4", closest: () => unit(true), nextElementSibling: roleBody }]
           : [action],
       });
       expect(councilResponseObservation(root(answer) as unknown as Element, CHATGPT_COMPLETION_ACTION_SELECTOR))
+        .toEqual({ text: "final answer", completion: true });
+      expect(councilResponseObservation(root(undefined, answer) as unknown as Element, CHATGPT_COMPLETION_ACTION_SELECTOR))
+        .toEqual({ text: "final answer", completion: true });
+      expect(councilResponseObservation(root(undefined, contentsAnswer) as unknown as Element, CHATGPT_COMPLETION_ACTION_SELECTOR))
         .toEqual({ text: "final answer", completion: true });
       expect(councilResponseObservation(root(undefined) as unknown as Element, CHATGPT_COMPLETION_ACTION_SELECTOR))
         .toEqual({ text: "", completion: true });

@@ -376,7 +376,18 @@ export function councilResponseObservation(element: Element, completionSelector:
     const rendered = (candidate: HTMLElement) => {
       const style = getComputedStyle(candidate);
       const bounds = candidate.getBoundingClientRect();
-      return candidate.isConnected && bounds.width > 0 && bounds.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+      if (!candidate.isConnected || style.display === "none" || style.visibility === "hidden") return false;
+      if (bounds.width > 0 && bounds.height > 0) return true;
+      if (style.display !== "contents") return false;
+      // Grouped message bodies can use display: contents and have no box of their own.
+      let checked = 0;
+      for (const child of candidate.querySelectorAll<HTMLElement>("*")) {
+        if (++checked > 64) break;
+        const childStyle = getComputedStyle(child);
+        const childBounds = child.getBoundingClientRect();
+        if (childStyle.display !== "none" && childStyle.visibility !== "hidden" && childBounds.width > 0 && childBounds.height > 0) return true;
+      }
+      return false;
     };
     // ChatGPT's DIL/Activity renderers do not guarantee a .markdown wrapper.
     const answerRootSelector = '.markdown, [data-message-author-role="assistant"] .puik-root.not-markdown > [class*="_DilResponseRoot"], [data-markdown-text-style="assistant-message"]';
@@ -390,10 +401,11 @@ export function councilResponseObservation(element: Element, completionSelector:
         ? Boolean(unit.querySelector('[data-conversation-role="assistant"]')) && !unit.querySelector('[data-user-message-bubble]')
         : activityContainers.some(container => container.contains(candidate));
     };
-    const answerCandidates = (selector: string) => [...root.querySelectorAll<HTMLElement>(selector)]
+    const visibleAnswerCandidates = (candidates: HTMLElement[]) => candidates
       .filter(candidate => candidate.closest("[data-streaming-response-status]") === null)
       .filter(assistantContent)
       .filter(rendered);
+    const answerCandidates = (selector: string) => visibleAnswerCandidates([...root.querySelectorAll<HTMLElement>(selector)]);
     const primary = answerCandidates(answerRootSelector);
     const joinedText = (candidates: HTMLElement[]) => candidates.map(candidate => candidate.innerText.trim()).filter(Boolean).join("\n\n").trim();
     // Activity/DIL can leave an empty markdown placeholder while rendering the answer in
@@ -402,6 +414,14 @@ export function councilResponseObservation(element: Element, completionSelector:
       ? [
           answerCandidates('[data-chatgpt-selection-message-id]'),
           answerCandidates('.puik-root.not-markdown'),
+          visibleAnswerCandidates([...root.querySelectorAll<HTMLElement>('[data-conversation-role="assistant"]')]
+            .filter(marker => marker.tagName === "H4")
+            .map(marker => {
+              const unit = marker.closest('[data-content-search-unit-key]');
+              const body = marker.nextElementSibling;
+              return unit && body && unit.contains(body) ? body as HTMLElement : undefined;
+            })
+            .filter((body): body is HTMLElement => Boolean(body))),
         ].find(candidates => Boolean(joinedText(candidates))) ?? []
       : [];
     const answers = joinedText(fallback) ? fallback : primary;
@@ -417,6 +437,28 @@ export function councilResponseObservation(element: Element, completionSelector:
 async function currentResponseObservation(responseTurn: Locator): Promise<{ text: string; completion: boolean }> {
   return await responseTurn.evaluate(councilResponseObservation, CHATGPT_COMPLETION_ACTION_SELECTOR)
     .catch(() => ({ text: "", completion: false }));
+}
+
+async function councilResponseStructureDiagnostic(page: Page, responseTurn?: Locator): Promise<string> {
+  const semanticCandidates = await page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR).filter({ visible: true }).count().catch(() => -1);
+  const bound = responseTurn ? await responseTurn.evaluate((element, completionSelector) => {
+    const root = element as HTMLElement;
+    const capped = (value: number) => Math.min(value, 1_000_000);
+    return {
+      group: Number(root.hasAttribute("data-turn-key")),
+      turnId: Number(root.hasAttribute("data-turn-id")),
+      testId: Number(root.hasAttribute("data-testid")),
+      assistantBodyNodes: capped(root.querySelectorAll('[data-message-author-role="assistant"], [data-conversation-role="assistant"], [data-turn="assistant"]').length),
+      markdownNodes: capped(root.querySelectorAll('.markdown, [data-markdown-text-style="assistant-message"]').length),
+      selectionNodes: capped(root.querySelectorAll('[data-chatgpt-selection-message-id]').length),
+      nonMarkdownNodes: capped(root.querySelectorAll('.puik-root.not-markdown').length),
+      completionControls: capped(root.querySelectorAll(completionSelector).length),
+      textChars: capped(root.innerText.length),
+      htmlChars: capped(root.innerHTML.length),
+    };
+  }, CHATGPT_COMPLETION_ACTION_SELECTOR).catch(() => undefined) : undefined;
+  return `semanticCandidates=${semanticCandidates},boundCandidate=${Number(Boolean(bound))}`
+    + (bound ? `,${Object.entries(bound).map(([key, value]) => `${key}=${value}`).join(",")}` : "");
 }
 
 async function bodyDiagnosticText(page: Page): Promise<string> {
@@ -568,6 +610,10 @@ async function sendAndWait(
     if (nextState.state === "COMPLETED") {
       phase(onPhase, onExecution, "response-complete");
       return nextState.lastAssistantText;
+    }
+    if (nextState.state === "DOM_DRIFT") {
+      const structure = await councilResponseStructureDiagnostic(page, responseTurn);
+      throw new Error(`ChatGPT Council DOM_DRIFT: ${nextState.reason} [${structure}]`);
     }
     throwDeepStateFailure(nextState);
     await new Promise(resolve => setTimeout(resolve, 250));
