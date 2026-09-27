@@ -1,0 +1,45 @@
+name: CWC-017 Response Binding Bootstrap
+
+on:
+  push:
+    branches: [cwc-personal]
+    paths: [.github/workflows/cwc-017-response-binding-bootstrap.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  repair-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cwc-personal
+          fetch-depth: 0
+      - name: Correct parent guard
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('.github/workflows/cwc-017-response-binding-repair.yml')
+          text = p.read_text(encoding='utf-8')
+          old = '''expected = "7cf956a128e85a27f7a4d0ac6025dbb0dd05acc9"
+          import subprocess
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if head != expected:
+              raise SystemExit(f"unexpected parent {head}; expected {expected}")'''
+          new = '''expected = "b708ad2415c6c4c620d1b4811f506826c0782254"
+          import subprocess
+          parent = subprocess.check_output(["git", "rev-parse", "HEAD^"], text=True).strip()
+          if parent != expected:
+              raise SystemExit(f"unexpected parent {parent}; expected {expected}")'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one guard block, found {text.count(old)}')
+          p.write_text(text.replace(old, new), encoding='utf-8')
+      - name: Commit gate correction
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/cwc-017-response-binding-repair.yml
+          git commit -m "chore: fix CWC-017 response-binding gate parent guard"
+          git push origin HEAD:cwc-personal
