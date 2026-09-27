@@ -1,0 +1,160 @@
+name: CWC-017 Prompt Boundary Repair
+
+on:
+  push:
+    branches:
+      - cwc-personal
+    paths:
+      - .github/workflows/cwc-017-prompt-boundary-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply CWC-017 live-path repairs
+        shell: python
+        run: |
+          from pathlib import Path
+
+          # 1) Council prompt verification: accept only Lexical's DOM-only NBSP representation
+          # for expected multi-space runs. Keep all other prompt mutations fail-closed.
+          driver = Path('src/council/playwright-council-driver.ts')
+          text = driver.read_text(encoding='utf-8')
+          anchor = '''async function composerText(composer: Locator): Promise<string> {\n  return await composer.evaluate(element => {\n    const clone = element.cloneNode(true) as HTMLElement;\n    clone.querySelectorAll('[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]').forEach(node => node.remove());\n    return [...clone.childNodes].map(child => child.textContent ?? "").join("\\n").trimStart();\n  });\n}\n'''
+          replacement = anchor + '''\nfunction councilPromptCodeUnitEquivalent(expected: string, observed: string, index: number): boolean {\n  const expectedUnit = expected[index];\n  const observedUnit = observed[index];\n  if (expectedUnit === observedUnit) return true;\n  if (expectedUnit !== " " || observedUnit !== "\\u00A0") return false;\n  return expected[index - 1] === " " || expected[index + 1] === " ";\n}\n\nexport function councilPromptTextEquivalent(expected: string, observed: string): boolean {\n  if (expected.length !== observed.length) return false;\n  for (let index = 0; index < expected.length; index += 1) {\n    if (!councilPromptCodeUnitEquivalent(expected, observed, index)) return false;\n  }\n  return true;\n}\n\nexport function councilPromptEquivalentPrefixLength(expected: string, observed: string): number {\n  const length = Math.min(expected.length, observed.length);\n  let index = 0;\n  while (index < length && councilPromptCodeUnitEquivalent(expected, observed, index)) index += 1;\n  return index;\n}\n'''
+          if anchor not in text:
+              raise SystemExit('Council composerText anchor missing')
+          text = text.replace(anchor, replacement, 1)
+          old = '''    if (observed === prompt) {\n      if (connectorSelected && !await councilConnectorIsSelected(composer)) throw new Error("CodexWeb Council connector selection disappeared while attaching the prompt");\n      phase(onPhase, onExecution, "prompt-attached");\n      return composer;\n    }'''
+          new = '''    if (councilPromptTextEquivalent(prompt, observed)) {\n      if (connectorSelected && !await councilConnectorIsSelected(composer)) throw new Error("CodexWeb Council connector selection disappeared while attaching the prompt");\n      phase(onPhase, onExecution, "prompt-attached");\n      return composer;\n    }'''
+          if old not in text:
+              raise SystemExit('Council prompt equality anchor missing')
+          text = text.replace(old, new, 1)
+          old = '''  let prefix = 0;\n  while (prefix < prompt.length && prompt[prefix] === observed[prefix]) prefix += 1;\n  throw new Error(`ChatGPT Council composer did not preserve the complete prompt (expectedChars=${prompt.length}, actualChars=${observed.length}, commonPrefixChars=${prefix})`);'''
+          new = '''  const prefix = councilPromptEquivalentPrefixLength(prompt, observed);\n  throw new Error(`ChatGPT Council composer did not preserve the complete prompt (expectedChars=${prompt.length}, actualChars=${observed.length}, commonPrefixChars=${prefix})`);'''
+          if old not in text:
+              raise SystemExit('Council prompt prefix anchor missing')
+          text = text.replace(old, new, 1)
+          driver.write_text(text, encoding='utf-8')
+
+          prompt_test = Path('tests/council-playwright-prompt.test.ts')
+          prompt_test.write_text('''import { describe, expect, test } from "bun:test";\nimport { councilPromptEquivalentPrefixLength, councilPromptTextEquivalent } from "../src/council/playwright-council-driver";\n\ndescribe("Council ChatGPT prompt preservation", () => {\n  test("accepts Lexical NBSP preservation only inside expected multi-space runs", () => {\n    const expected = `prefix\\n${" ".repeat(24)}suffix`;\n    const observed = `prefix\\n${"\\u00A0 ".repeat(12)}suffix`;\n    expect(observed.length).toBe(expected.length);\n    expect(councilPromptTextEquivalent(expected, observed)).toBeTrue();\n    expect(councilPromptEquivalentPrefixLength(expected, observed)).toBe(expected.length);\n  });\n\n  test("accepts pretty-printed Council JSON indentation represented with NBSP", () => {\n    const expected = JSON.stringify({ roomId: "g9", nested: { token: "CWC017" } }, null, 2);\n    const observed = expected.replace(/^ {2,}/gm, spaces => spaces.replace(/ (?= )/g, "\\u00A0"));\n    expect(observed.length).toBe(expected.length);\n    expect(councilPromptTextEquivalent(expected, observed)).toBeTrue();\n  });\n\n  test("keeps single spaces, newlines, tabs and intentional NBSP exact", () => {\n    expect(councilPromptTextEquivalent("a b", "a\\u00A0b")).toBeFalse();\n    expect(councilPromptTextEquivalent("a\\nb", "a b")).toBeFalse();\n    expect(councilPromptTextEquivalent("a\\tb", "a b")).toBeFalse();\n    expect(councilPromptTextEquivalent("a\\u00A0b", "a b")).toBeFalse();\n  });\n});\n''', encoding='utf-8')
+
+          # 2) Retry safety: the hard safety boundary is actual submit-started, not failure category.
+          control = Path('src/council/execution-control-plane.ts')
+          text = control.read_text(encoding='utf-8')
+          old = '''const SAFE_PRE_SUBMIT_FAILURES = new Set<CouncilFailureCode>([\n  "CAPACITY_BUSY",\n  "SURFACE_UNAVAILABLE",\n  "CONNECTION_FAILED",\n]);\n'''
+          if old not in text:
+              raise SystemExit('retry-safe failure set anchor missing')
+          text = text.replace(old, '', 1)
+          old = '''export function deriveExecutionRetrySafety(input: CouncilExecutionRetryInput): CouncilExecutionRetrySafety {\n  if (input.status === "uncertain" || input.failureCode === "SUBMISSION_UNCERTAIN") return "operator-resolution-required";\n  if (input.phase && councilPhaseReached(input.phase, "submit-started")) return "forbidden-after-submit";\n  if (input.status === "completed" || input.status === "waiting-user") return "forbidden-after-submit";\n  if (input.failureCode) return SAFE_PRE_SUBMIT_FAILURES.has(input.failureCode) ? "safe-before-submit" : "forbidden-after-submit";\n  if (input.status === "failed") return "forbidden-after-submit";\n  return "safe-before-submit";\n}\n'''
+          new = '''export function deriveExecutionRetrySafety(input: CouncilExecutionRetryInput): CouncilExecutionRetrySafety {\n  if (input.status === "uncertain" || input.failureCode === "SUBMISSION_UNCERTAIN") return "operator-resolution-required";\n  if (input.phase && councilPhaseReached(input.phase, "submit-started")) return "forbidden-after-submit";\n  if (input.status === "completed" || input.status === "waiting-user") return "forbidden-after-submit";\n  // Before submit-started there is no possible duplicate external ChatGPT message. Failure\n  // category may affect whether an automated policy chooses to retry, but it must not rewrite\n  // the external-submission safety boundary itself.\n  return "safe-before-submit";\n}\n'''
+          if old not in text:
+              raise SystemExit('deriveExecutionRetrySafety anchor missing')
+          text = text.replace(old, new, 1)
+          control.write_text(text, encoding='utf-8')
+
+          control_test = Path('tests/council-execution-control-plane.test.ts')
+          text = control_test.read_text(encoding='utf-8')
+          old = '''    expect(deriveExecutionRetrySafety({ status: "failed", failureCode: "CHATGPT_LIMITED" })).toBe("forbidden-after-submit");'''
+          new = '''    expect(deriveExecutionRetrySafety({ phase: "conversation-ready", status: "failed", failureCode: "CHATGPT_LIMITED" })).toBe("safe-before-submit");\n    expect(deriveExecutionRetrySafety({ phase: "conversation-ready", status: "failed", failureCode: "UNKNOWN" })).toBe("safe-before-submit");'''
+          if old not in text:
+              raise SystemExit('retry safety test anchor missing')
+          text = text.replace(old, new, 1)
+          marker = '''  test("caps events per run but preserves the creation event and latest evidence", () => {'''
+          addition = '''  test("terminal pre-submit failure keeps retry safety at the actual submission boundary", () => {\n    const { plane } = fixture();\n    const run = plane.createRun({ traceId: "trace_prompt", agentId: "lead", kind: "turn" });\n    plane.recordPhase(run.runId, "conversation-ready");\n    plane.failRun(run.runId, {\n      failureCode: "UNKNOWN",\n      message: "ChatGPT Council composer did not preserve the complete prompt",\n    });\n    const failed = plane.readRun(run.runId)!;\n    expect(failed.status).toBe("failed");\n    expect(failed.phase).toBe("conversation-ready");\n    expect(failed.retrySafety).toBe("safe-before-submit");\n  });\n\n'''
+          if marker not in text:
+              raise SystemExit('control-plane test insertion anchor missing')
+          text = text.replace(marker, addition + marker, 1)
+          control_test.write_text(text, encoding='utf-8')
+
+          # 3) Renderer shared projection: a broken long-poll continuation is not authoritative\n          # stale evidence. Rehydrate the canonical snapshot first; only a failed full snapshot\n          # may degrade the last-good projection.
+          supervisor = Path('launcher/electron/council-connection-supervisor.cjs')
+          text = supervisor.read_text(encoding='utf-8')
+          old = '''      } catch (error) {\n        if (signal.aborted) break;\n        this.diagnostic("warn", "council.shared_stream_interrupted", { reason: safeErrorKind(error) });\n        this.markFailure("STREAM_INTERRUPTED");\n        await this.sleep(this.retryMs, signal);\n      }'''
+          new = '''      } catch (error) {\n        if (signal.aborted) break;\n        const reason = safeErrorKind(error);\n        // A loopback long-poll can be interrupted while the authoritative Council runtime remains\n        // healthy. Rehydrate before marking the last-good projection stale; this prevents a\n        // transient fetch TypeError from manufacturing STREAM_INTERRUPTED state.\n        this.diagnostic("info", "council.shared_stream_reconnect", { reason });\n        await this.hydrateOnce(signal);\n        if (signal.aborted) break;\n        if (this.runtime.projection.syncState !== "live") {\n          this.diagnostic("warn", "council.shared_stream_interrupted", { reason });\n        }\n        await this.sleep(this.retryMs, signal);\n      }'''
+          if old not in text:
+              raise SystemExit('connection supervisor stream catch anchor missing')
+          text = text.replace(old, new, 1)
+          supervisor.write_text(text, encoding='utf-8')
+
+          supervisor_test = Path('launcher/tests/council-connection-supervisor.test.cjs')
+          text = supervisor_test.read_text(encoding='utf-8')
+          text += '''\n\ntest("continuation TypeError rehydrates before declaring the shared projection stale", async () => {\n  const events = [];\n  const abortController = new AbortController();\n  let snapshots = 0;\n  let continuations = 0;\n  const envelope = cursor => ({ schemaVersion: 1, state: canonicalState, cursor, generatedAt: canonicalState.generatedAt });\n  const supervisor = new CouncilConnectionSupervisor({\n    retryMs: 100,\n    logger: {\n      info(event, fields) { events.push({ level: "info", event, fields }); },\n      warn(event, fields) { events.push({ level: "warn", event, fields }); },\n    },\n    capabilities: () => unavailableCapabilities,\n    client: {\n      async getSnapshot() {\n        snapshots += 1;\n        if (snapshots === 2) setTimeout(() => abortController.abort(), 0);\n        return envelope(`C${snapshots}`);\n      },\n      async next() {\n        continuations += 1;\n        throw new TypeError("fetch failed");\n      },\n    },\n  });\n\n  await supervisor.run(abortController.signal);\n  assert.equal(snapshots, 2);\n  assert.equal(continuations, 1);\n  assert.equal(supervisor.snapshot().projection.syncState, "live");\n  assert.ok(events.some(item => item.event === "council.shared_stream_reconnect" && item.fields?.reason === "TypeError"));\n  assert.equal(events.some(item => item.event === "council.shared_stream_interrupted"), false);\n  assert.equal(events.some(item => item.event === "council.shared_projection_stale"), false);\n});\n'''
+          supervisor_test.write_text(text, encoding='utf-8')
+
+      - name: Verify patch shape
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- src/council/playwright-council-driver.ts src/council/execution-control-plane.ts tests/council-playwright-prompt.test.ts tests/council-execution-control-plane.test.ts launcher/electron/council-connection-supervisor.cjs launcher/tests/council-connection-supervisor.test.cjs
+      - name: Commit repairs
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/council/playwright-council-driver.ts src/council/execution-control-plane.ts tests/council-playwright-prompt.test.ts tests/council-execution-control-plane.test.ts launcher/electron/council-connection-supervisor.cjs launcher/tests/council-connection-supervisor.test.cjs
+          git commit -m "fix: preserve managed Council prompts before submit"
+          git push origin HEAD:cwc-personal
+
+  validate:
+    needs: patch
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cwc-personal
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Frozen root install
+        shell: pwsh
+        run: bun install --frozen-lockfile
+      - name: Frozen launcher install
+        shell: pwsh
+        run: bun install --cwd launcher --frozen-lockfile
+      - name: Typecheck
+        shell: pwsh
+        run: bun run typecheck
+      - name: Focused live-path regressions
+        shell: pwsh
+        run: >-
+          bun test
+          tests/council-playwright-prompt.test.ts
+          tests/council-execution-control-plane.test.ts
+          tests/council-node-playwright-helper.test.ts
+          tests/council-browser-transport.test.ts
+          tests/council-execution-browser-integration.test.ts
+          tests/council-autonomy-errors.test.ts
+          tests/council-launcher-turn-control.test.ts
+          tests/council-playwright-surface.test.ts
+      - name: Launcher connection supervisor regression
+        shell: pwsh
+        run: node --test launcher/tests/council-connection-supervisor.test.cjs
+      - name: Full verify
+        shell: pwsh
+        run: bun run verify
+      - name: Direct Node helper CDP regression
+        shell: pwsh
+        run: node scripts/qa-cwc-council-helper-cdp.mjs
+      - name: Local Council runtime security smoke
+        shell: pwsh
+        run: node scripts/qa-cwc-local-runtime.mjs
+      - name: Integrity
+        shell: pwsh
+        run: |
+          git diff --exit-code -- bun.lock launcher/bun.lock
+          if (git status --short) {
+            git status --short
+            throw "Tracked worktree changed during CWC-017 prompt-boundary validation"
+          }
