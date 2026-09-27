@@ -5,6 +5,7 @@ import { deriveCouncilConnections, type CouncilConnectionNode, type CouncilConne
 import { ExecutionBadge, ExecutionInspector, executionByAgent, useCouncilExecutionRuns } from "./CouncilExecutionInspector";
 import "./council-shell.css";
 import "./council-36.css";
+import { ProjectRelayPanel } from "./ProjectRelayPanel";
 
 type CouncilExceptionalWorkView = {
   id: string; kind: string; projectRoomId: string; targetAgentId?: string; taskId?: string;
@@ -28,10 +29,11 @@ type Council36Api = {
 
 const api = window.codexWebLauncher;
 const api36 = api as (typeof api & Council36Api);
-type View = "overview" | "chatgpt" | "agents" | "work" | "executions" | "memory" | "connections" | "diagnostics" | "settings";
+type View = "overview" | "relay" | "chatgpt" | "agents" | "work" | "executions" | "memory" | "connections" | "diagnostics" | "settings";
 
 const NAV: Array<{ id: View; label: string; hint: string; group: "workspace" | "intelligence" | "system" }> = [
   { id: "overview", label: "Overview", hint: "Mission and attention", group: "workspace" },
+  { id: "relay", label: "Project relay", hint: "Work between your chats", group: "workspace" },
   { id: "chatgpt", label: "ChatGPT", hint: "Persistent conversations", group: "workspace" },
   { id: "agents", label: "Agents", hint: "Team and capability", group: "workspace" },
   { id: "work", label: "Work", hint: "Tasks and autonomy", group: "workspace" },
@@ -74,7 +76,7 @@ export function CouncilApp() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
   const [browser, setBrowser] = useState<BrowserState | null>(null);
   const [councilRuntime, setCouncilRuntime] = useState<CouncilRuntimeViewState | null>(null);
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>("relay");
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -181,7 +183,7 @@ export function CouncilApp() {
     </header>
 
     <aside className="council-sidebar">
-      <div className="council-sidebar-project"><span className="eyebrow">ACTIVE PROJECT</span><strong>{project?.name ?? "No managed project"}</strong><p>{project?.mission ?? "Bind a persistent ChatGPT conversation as Lead to start a managed Council project."}</p></div>
+      <div className="council-sidebar-project"><span className="eyebrow">CWC PERSONAL</span><strong>{project?.name ?? "Work between your chats"}</strong><p>{project?.mission ?? "Open Project relay to connect two existing chats and keep your project moving."}</p></div>
       {(["workspace", "intelligence", "system"] as const).map(group => <div className="council-nav-group" key={group}><span>{group}</span><nav>{NAV.filter(item => item.group === group).map(item => <button key={item.id} className={view === item.id ? "active" : ""} aria-current={view === item.id ? "page" : undefined} onClick={() => setView(item.id)}><i aria-hidden="true" /><div><strong>{item.label}</strong><small>{item.hint}</small></div>{item.id === "work" && (autonomy?.queue.totalActive ?? 0) > 0 ? <em>{autonomy!.queue.totalActive}</em> : null}{item.id === "executions" && executionAttention > 0 ? <em>{executionAttention}</em> : null}</button>)}</nav></div>)}
       <div className="council-sidebar-summary"><div><span>Team</span><strong>{agents.length} agents</strong></div><div><span>Attention</span><strong className={(autonomy?.breakerOpenCount ?? 0) + executionAttention > 0 ? "warn" : ""}>{(autonomy?.breakerOpenCount ?? 0) + (autonomy?.dispatcher.uncertain ?? 0) + executionAttention} items</strong></div></div>
     </aside>
@@ -193,6 +195,7 @@ export function CouncilApp() {
       {view === "work" ? <WorkWorkspace runtime={councilRuntime} roomId={roomId} autonomy={autonomy} agents={agents} /> : null}
       {view === "executions" ? <ExecutionInspector runs={executionState.runs} loading={executionState.loading} loadError={executionState.error} refreshRuns={executionState.refresh} /> : null}
       {view === "memory" ? <MemoryPanel roomId={roomId} /> : null}
+      {view === "relay" ? <ProjectRelayPanel /> : null}
       {view === "connections" ? <ConnectionsWorkspace connections={connections} snapshot={snapshot} busy={busy} onVerify={verifyConnections} onOpenConnectorSetup={() => void run(() => api.openExternal(snapshot.urls.connectors))} /> : null}
       {view === "diagnostics" ? <DiagnosticsWorkspace connections={connections} logs={logs} busy={busy} onVerify={verifyConnections} onDoctor={() => void run(async () => { const report = await api.doctor(); if (!report.ok) throw new Error(report.checks.filter(check => check.status !== "ok").map(check => check.message).join(" · ")); })} /> : null}
       {view === "settings" ? <Settings snapshot={snapshot} busy={busy} run={run} /> : null}

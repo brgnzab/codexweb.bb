@@ -39,6 +39,8 @@ launcher/artifacts/
 /managed-project.json
 /supervisor.json
 /memory-index.json
+/project-relays.json
+/bridge-requests/
 /Cookies
 /Cookies-journal
 /Login Data

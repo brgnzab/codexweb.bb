@@ -26,6 +26,9 @@ const { deriveCouncilCapabilities } = require("./council-capabilities.cjs");
 const { CouncilConnectionSupervisor } = require("./council-connection-supervisor.cjs");
 const {
   autonomyStatus,
+  listProjectRelays,
+  startProjectRelay,
+  cancelProjectRelay,
   bindCurrentConversationAsLead,
   cancelExceptionalWork,
   cancelExecutionRun,
@@ -288,6 +291,9 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:council-agent-focus", (_event, agentId) => focusAgentConversation(safeCouncilId(agentId, "agentId")));
   handle("launcher:council-execution-runs", () => listExecutionRuns());
+  handle("launcher:project-relay-list", () => listProjectRelays());
+  handle("launcher:project-relay-start", (_event, input) => startProjectRelay(input));
+  handle("launcher:project-relay-cancel", (_event, id) => cancelProjectRelay(safeCouncilId(id, "relayId")));
   handle("launcher:council-execution-read", (_event, runId) => readExecutionRun(safeCouncilId(runId, "runId")));
   handle("launcher:council-execution-events", (_event, runId) => readExecutionEvents(safeCouncilId(runId, "runId")));
   handle("launcher:council-execution-receipts", () => readExecutionReceipts());

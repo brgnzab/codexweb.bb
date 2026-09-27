@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ProjectRelayService, RelayInput } from "./project-relay";
 import { ownerBearerMatches } from "./owner-control";
 import type { PublicManagedAgent } from "./managed-runtime";
 import type { ManagedCouncilProject } from "./managed-project-state";
@@ -85,6 +86,7 @@ export interface CouncilOwnerApi {
   autonomy?: CouncilOwnerAutonomyApi;
   memory?: CouncilOwnerMemoryApi;
   execution?: CouncilOwnerExecutionApi;
+  projectRelay?: ProjectRelayService;
 }
 
 function canonicalPublicWake(wake: CouncilWakeEvent): CouncilWakeEvent {
@@ -165,10 +167,11 @@ function decodeCursor(value: string | null): { epoch: string; revision: number }
 }
 
 async function parseOwnerJson(request: Request): Promise<Record<string, unknown>> {
+  const limit = new URL(request.url).pathname === "/api/owner/project-relay/complete" ? 256 * 1024 : OWNER_BODY_LIMIT;
   const length = Number(request.headers.get("content-length") ?? "0");
-  if (Number.isFinite(length) && length > OWNER_BODY_LIMIT) throw new Error("owner request is too large");
+  if (Number.isFinite(length) && length > limit) throw new Error("owner request is too large");
   const text = await request.text();
-  if (Buffer.byteLength(text, "utf8") > OWNER_BODY_LIMIT) throw new Error("owner request is too large");
+  if (Buffer.byteLength(text, "utf8") > limit) throw new Error("owner request is too large");
   if (!text) return {};
   const body = JSON.parse(text) as unknown;
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("owner request is invalid");
@@ -202,6 +205,13 @@ function ownerExactKeys(body: Record<string, unknown>, allowed: readonly string[
 }
 
 const OWNER_ROUTE_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "/api/owner/project-relay/list": [],
+  "/api/owner/project-relay/start": ["requestId", "name", "task", "peers", "maxTurns"],
+  "/api/owner/project-relay/cancel": ["relay_id"],
+  "/api/owner/project-relay/claim": ["worker"],
+  "/api/owner/project-relay/submitting": ["relay_id", "delivery_id", "lease"],
+  "/api/owner/project-relay/complete": ["relay_id", "delivery_id", "lease", "answer", "receipt"],
+  "/api/owner/project-relay/fail": ["relay_id", "delivery_id", "lease", "reason"],
   "/api/owner/start-lead": ["conversation_url", "project_name"],
   "/api/owner/relay/start": ["lead_conversation_url", "peer_conversation_url", "peer_agent_id", "nonce", "task"],
   "/api/owner/agent/focus": ["agent_id"],
@@ -287,6 +297,24 @@ export function startCouncilHttpServer(
             const body = await parseOwnerJson(request);
             const allowedOwnerFields = OWNER_ROUTE_FIELDS[url.pathname];
             if (allowedOwnerFields) ownerExactKeys(body, allowedOwnerFields);
+
+            if (url.pathname.startsWith("/api/owner/project-relay/")) {
+              const relay = options.owner?.projectRelay;
+              if (!relay) return ownerJson("Project relay is unavailable", 503);
+              const operation = url.pathname.slice("/api/owner/project-relay/".length);
+              if (operation === "list") return ownerJson({ relays: relay.list(), bridge: relay.status() });
+              if (operation === "start") return ownerJson(relay.start(body as RelayInput));
+              if (operation === "cancel") return ownerJson(relay.cancel(ownerId(body, "relay_id")));
+              if (operation === "claim") return ownerJson(relay.claim(ownerId(body, "worker")));
+              if (["submitting", "complete", "fail"].includes(operation)) {
+                const ids = [ownerId(body, "relay_id"), ownerId(body, "delivery_id"), ownerId(body, "lease")] as const;
+                if (operation === "submitting") relay.submitting(...ids);
+                if (operation === "complete") relay.finish(...ids, ownerString(body, "answer", 48000), ownerString(body, "receipt", 200));
+                if (operation === "fail") relay.fail(...ids, ownerString(body, "reason", 1000));
+                return ownerJson({ accepted: true });
+              }
+              return ownerJson("Unknown project relay operation", 404);
+            }
 
             if (url.pathname === "/api/owner/start-lead") {
               const conversationUrl = ownerString(body, "conversation_url", 1_000);

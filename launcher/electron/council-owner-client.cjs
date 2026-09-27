@@ -159,6 +159,9 @@ async function focusAgentConversation(agentId, options = {}) {
 }
 
 async function listExecutionRuns(options = {}) { return await optionalOwnerRequest("execution/runs", {}, [], options); }
+async function listProjectRelays(options = {}) { return await ownerRequest("project-relay/list", {}, options); }
+async function startProjectRelay(input, options = {}) { return await ownerRequest("project-relay/start", input, options); }
+async function cancelProjectRelay(id, options = {}) { return await ownerRequest("project-relay/cancel", { relay_id: assertId(id, "relayId") }, options); }
 async function readExecutionRun(runId, options = {}) { return await ownerRequest("execution/read", { run_id: assertId(runId, "runId") }, options); }
 async function readExecutionEvents(runId, options = {}) { return await ownerRequest("execution/events", { run_id: assertId(runId, "runId") }, options); }
 async function readExecutionReceipts(options = {}) { return await optionalOwnerRequest("execution/receipts", {}, [], options); }
@@ -210,6 +213,9 @@ async function clearProjectMemory(roomId, options = {}) {
 }
 
 module.exports = {
+  listProjectRelays,
+  startProjectRelay,
+  cancelProjectRelay,
   OWNER_REQUEST_TIMEOUT_MS,
   OWNER_LONG_REQUEST_TIMEOUT_MS,
   RUNTIME_UNAVAILABLE_CODE,

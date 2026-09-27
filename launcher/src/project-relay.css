@@ -1,0 +1,14 @@
+.project-relay { max-width: 1120px; margin: 0 auto; padding: 24px; }
+.project-relay header p, .project-relay p { line-height: 1.6; }
+.project-relay form, .project-relay article { border: 1px solid #34424d; border-radius: 12px; padding: 20px; margin: 18px 0; }
+.project-relay fieldset { border: 0; padding: 0; min-width: 0; }
+.project-relay legend { font-weight: 600; padding: 8px 0; }
+.project-relay label { display: grid; gap: 7px; margin: 12px 0; }
+.project-relay input, .project-relay select, .project-relay textarea { width: 100%; box-sizing: border-box; padding: 10px; color: inherit; background: #131b23; border: 1px solid #465661; border-radius: 6px; }
+.project-relay textarea { resize: vertical; }
+.relay-peers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.project-relay button { padding: 10px 16px; margin: 8px 12px 0 0; }
+.project-relay pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; line-height: 1.6; }
+.project-relay code { overflow-wrap: anywhere; }
+.relay-error { color: #ffb4aa; }
+@media (max-width: 800px) { .relay-peers { grid-template-columns: 1fr; } }

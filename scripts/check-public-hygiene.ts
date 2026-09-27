@@ -59,6 +59,7 @@ const SENSITIVE_STATE_BASENAMES = new Set([
   "managed-project.json",
   "memory-index.json",
   "owner-control.json",
+  "project-relays.json",
   "preferences",
   "secure preferences",
   "storage-state.json",

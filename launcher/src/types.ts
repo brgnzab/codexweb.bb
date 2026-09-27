@@ -454,6 +454,9 @@ export interface LauncherApi {
   }>;
   focusCouncilAgent(agentId: string): Promise<{ agentId: string; focused: true }>;
   councilExecutionRuns(): Promise<CouncilExecutionRunView[]>;
+  projectRelayList(): Promise<import("./ProjectRelayPanel").ProjectRelaySnapshot>;
+  projectRelayStart(input: import("./ProjectRelayPanel").ProjectRelayInput): Promise<import("./ProjectRelayPanel").ProjectRelayView>;
+  projectRelayCancel(id: string): Promise<import("./ProjectRelayPanel").ProjectRelayView>;
   councilExecutionRun(runId: string): Promise<CouncilExecutionRunView>;
   councilExecutionEvents(runId: string): Promise<CouncilExecutionEventView[]>;
   councilExecutionReceipts(): Promise<CouncilExecutionCommandReceiptView[]>;

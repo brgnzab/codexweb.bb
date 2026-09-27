@@ -1,5 +1,9 @@
 # CodexWeb Council 4.1
 
+## CWC Personal project workflow
+
+The personal fork's purpose is to remove manual prompt/result copy-paste between existing GPT Web, Codex, and Work chats. Use **Project relay** to bind a worker and reviewer and continue their task until a real blocker or UAT-ready result. GPT Web pairs use the browser runtime; native Codex/Work deliveries require the owner-authorized desktop controller. See [project relay and its validation boundary](docs/CWC_PROJECT_RELAY.md) and [controller setup](docs/CWC_DESKTOP_CONTROLLER.md). The Council features below remain available.
+
 **A standalone Electron-first mission control where persistent ChatGPT conversations can operate as a managed AI team with durable collaboration, typed execution telemetry, auditable operator actions, and fail-closed browser automation.**
 
 ## What changed in 4.1

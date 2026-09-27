@@ -24,6 +24,7 @@ import { CouncilStaleWorkMonitor } from "./stale-work-monitor";
 import { CouncilStore } from "./store";
 import { CouncilSupervisor } from "./supervisor";
 import { CouncilWakeEngine } from "./wake-engine";
+import { ProjectRelayService } from "./project-relay";
 
 function takeOption(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -68,13 +69,25 @@ export async function runCouncilMcpMain(args: string[]): Promise<void> {
   let execution: CouncilExecutionControlPlane | undefined;
   let memoryProjector: CouncilMemoryProjector | undefined;
   let staleMonitor: CouncilStaleWorkMonitor | undefined;
+  let projectRelay: ProjectRelayService | undefined;
   try {
     const config = loadConfig();
     if (config.browserHost === "launcher" && config.browserHostDescriptorPath) {
       const control = createLauncherPersistentTurnControl(config.browserHostDescriptorPath);
       execution = new CouncilExecutionControlPlane();
-      const transport = new CouncilBrowserTransport(control, new NodePlaywrightCouncilChatDriver(config.browserHostDescriptorPath), { execution });
+      const transport = new CouncilBrowserTransport(control, new NodePlaywrightCouncilChatDriver(config.browserHostDescriptorPath), { execution, beforeTurn: input => projectRelay?.assertBrowserAccess(input.conversationUrl, input.agentId) });
       managedState = new ManagedAgentStateStore(join(councilDir, "managed-agents.json"));
+      projectRelay = new ProjectRelayService(join(councilDir, "project-relays.json"), {
+        run: async (peer, prompt, deliveryId) => {
+          if (managedState!.list().some(agent => agent.conversationUrl === peer.conversation && managedRuntime?.managedStatus(agent.id) === "active")) throw new Error("This chat still has an active Council turn. Let it finish before starting the project relay.");
+          const agentId = `relay-${deliveryId}`;
+          try {
+            const result = await transport.run({ agentId, conversationUrl: peer.conversation, prompt });
+            if (result.conversationUrl !== peer.conversation) throw new Error("Project relay conversation changed unexpectedly");
+            return result.answer;
+          } finally { await transport.release(agentId).catch(() => false); }
+        },
+      });
       managedRuntime = new CouncilManagedRuntime({
         council: store,
         managed: managedState,
@@ -118,6 +131,7 @@ export async function runCouncilMcpMain(args: string[]): Promise<void> {
       }),
       owner: {
         token: () => ownerToken,
+        projectRelay,
         startLead: async input => {
           if (!managedRuntime || !managedState) throw new Error("Managed ChatGPT browser transport is unavailable");
           const name = projectName(input.projectName);
@@ -294,6 +308,7 @@ export async function runCouncilMcpMain(args: string[]): Promise<void> {
       if (typeof ownerPort !== "number" || !Number.isInteger(ownerPort)) throw new Error("Council owner server did not expose a valid loopback port");
       const descriptor = issueCouncilOwnerControl(ownerDescriptorPath, ownerPort);
       ownerToken = descriptor.token;
+      projectRelay?.kick();
       autonomy?.start();
       memoryProjector?.start();
       staleMonitor?.start();
@@ -316,6 +331,7 @@ export async function runCouncilMcpMain(args: string[]): Promise<void> {
       ...(execution ? { execution } : {}),
     });
   } finally {
+    projectRelay?.stop();
     staleMonitor?.stop();
     memoryProjector?.stop();
     supervisor?.stop();

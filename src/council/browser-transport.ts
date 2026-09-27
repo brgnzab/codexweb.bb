@@ -67,6 +67,7 @@ export interface CouncilBrowserCaptureResult { png: Buffer; conversationUrl: str
 export interface CouncilBrowserTransportOptions {
   heartbeatMs?: number;
   execution?: CouncilExecutionControlPlane;
+  beforeTurn?: (input: CouncilBrowserTransportRunInput) => void;
 }
 
 interface ExecutionContext {
@@ -266,6 +267,7 @@ export class CouncilBrowserTransport {
 
   async run(input: CouncilBrowserTransportRunInput): Promise<CouncilBrowserTransportResult> {
     const agentId = validAgentId(input.agentId);
+    this.options.beforeTurn?.(input);
     if (!input.prompt.trim()) throw new Error("prompt is required");
     if (input.signal?.aborted) throw new DOMException("Council browser turn aborted", "AbortError");
     const execution = this.beginExecution({ agentId, kind: "turn", conversationBound: Boolean(input.conversationUrl), externalSignal: input.signal });
