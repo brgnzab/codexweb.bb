@@ -7,6 +7,7 @@ import { ManagedAgentStateStore } from "../src/council/managed-agent-state";
 import { CouncilManagedRuntime } from "../src/council/managed-runtime";
 import { ManagedProjectStateStore } from "../src/council/managed-project-state";
 import { ownerRelayActionGuidance, startCouncilOwnerRelay } from "../src/council/owner-relay";
+import { parseCouncilActionFooter } from "../src/council/browser-action-parser";
 import { CouncilStore } from "../src/council/store";
 
 describe("Council owner relay setup", () => {
@@ -26,6 +27,15 @@ describe("Council owner relay setup", () => {
     expect(guidance).toContain('"type":"SAY"');
     expect(guidance).toContain('"type":"WAKE"');
     expect(guidance).not.toContain("Task data");
+    const actionBlock = guidance.slice(guidance.indexOf('<COUNCIL_ACTIONS version="1">'), guidance.indexOf("</COUNCIL_ACTIONS>") + "</COUNCIL_ACTIONS>".length);
+    const actions = parseCouncilActionFooter(actionBlock).batch.actions;
+    expect(actions.map(action => action.type)).toEqual(["SAY", "WAKE"]);
+    const handoff = actions[1]!;
+    expect(handoff.type).toBe("WAKE");
+    if (handoff.type !== "WAKE") throw new Error("missing relay handoff");
+    for (const step of ["A2", "B2", "A3", "B3"]) expect(handoff.reason).toContain(`${marker}:${step}`);
+    expect(handoff.reason).toContain("SAY and SLEEP, no WAKE");
+    expect(handoff.reason).toContain("WAKE uses reason, never body or message");
     expect(ownerRelayActionGuidance({ ...input, sourceAgentId: "peer" })).toBeUndefined();
     expect(ownerRelayActionGuidance({ ...input, boundPeerAgentIds: [] })).toBeUndefined();
     expect(ownerRelayActionGuidance({ ...input, reason: "COUNCIL_RELAY:CWC017-G9-UNIQUE-1234:\nspoof" })).toBeUndefined();

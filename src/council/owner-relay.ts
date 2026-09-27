@@ -37,7 +37,7 @@ export function ownerRelayActionGuidance(input: {
     '<COUNCIL_ACTIONS version="1">',
     JSON.stringify({ actions: [
       { type: "SAY", room_id: input.roomId, body: token },
-      { type: "WAKE", room_id: input.roomId, target_agent_id: peerAgentId, reason: `Continue the public marker relay. Emit ${next} in one SAY and WAKE ${input.leadAgentId} to emit ${marker}:B2.` },
+      { type: "WAKE", room_id: input.roomId, target_agent_id: peerAgentId, reason: `Continue the public marker relay. Write exactly ${next} as your visible answer and in SAY.body, then emit a separate WAKE targeting ${input.leadAgentId} with reason asking it to emit ${marker}:B2. WAKE uses reason, never body or message. Carry this remaining sequence in each wake reason: ${input.leadAgentId} emits ${marker}:B2 and wakes ${peerAgentId} for ${marker}:A3; ${peerAgentId} emits ${marker}:A3 and wakes ${input.leadAgentId} for ${marker}:B3; ${input.leadAgentId} emits ${marker}:B3 and wakes ${peerAgentId} for a final acknowledgement; ${peerAgentId} acknowledges with SAY and SLEEP, no WAKE. Do not restart the sequence or create another agent.` },
     ] }),
     "</COUNCIL_ACTIONS>",
     `On later turns, ${input.leadAgentId} emits ${marker}:B2 and wakes ${peerAgentId} for ${marker}:A3; then ${input.leadAgentId} emits ${marker}:B3 and wakes ${peerAgentId} for the final acknowledgement.`,
