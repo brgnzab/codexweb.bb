@@ -91,6 +91,8 @@ describe("CouncilAgentManager", () => {
       managed.bindConversation("bob", "https://chatgpt.com/c/bob");
       await manager.wakeAgent("alice", "bob", "core", "Review this");
       expect(calls[0].conversationUrl).toBe("https://chatgpt.com/c/bob");
+      expect(calls[0].prompt).toContain("Allowed actions: SAY, PROPOSE, REPLY, WAKE");
+      expect(calls[0].prompt).toContain("Review this");
       expect(calls[0].resurrectionPrompt).toContain("Review this");
       expect(council.wakeTransitions).toEqual(["dispatched", "target-running", "replied"]);
       expect(council.state.wakes[0].status).toBe("replied");

@@ -138,6 +138,22 @@ async function bindCurrentConversationAsLead({ conversationUrl, projectName }, o
   }, options);
 }
 
+async function startCouncilRelay({ leadConversationUrl, peerConversationUrl, peerAgentId, nonce, task }, options = {}) {
+  const peerId = assertId(peerAgentId, "peerAgentId");
+  if (peerId.length > 64) throw new Error("peerAgentId is invalid");
+  const relayNonce = String(nonce ?? "").trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{11,95}$/.test(relayNonce)) throw new Error("relay nonce is invalid");
+  const relayTask = String(task ?? "").trim();
+  if (!relayTask || relayTask.length > 3_500) throw new Error("relay task is invalid");
+  return await ownerRequest("relay/start", {
+    lead_conversation_url: assertConversationUrl(leadConversationUrl),
+    peer_conversation_url: assertConversationUrl(peerConversationUrl),
+    peer_agent_id: peerId,
+    nonce: relayNonce,
+    task: relayTask,
+  }, { ...options, timeoutMs: options.timeoutMs ?? OWNER_LONG_REQUEST_TIMEOUT_MS });
+}
+
 async function focusAgentConversation(agentId, options = {}) {
   return await ownerRequest("agent/focus", { agent_id: assertId(agentId, "agentId") }, { ...options, timeoutMs: options.timeoutMs ?? OWNER_LONG_REQUEST_TIMEOUT_MS });
 }
@@ -228,5 +244,6 @@ module.exports = {
   retryUncertainWork,
   runSupervisorNow,
   setSupervisorManager,
+  startCouncilRelay,
   supervisorStatus,
 };

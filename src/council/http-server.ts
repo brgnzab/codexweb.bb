@@ -79,6 +79,7 @@ export interface CouncilOwnerExecutionApi {
 export interface CouncilOwnerApi {
   token: () => string | undefined;
   startLead: (input: { conversationUrl: string; projectName: string }) => Promise<unknown>;
+  startRelay?: (input: { leadConversationUrl: string; peerConversationUrl: string; peerAgentId: string; nonce: string; task: string }) => Promise<unknown>;
   focusAgent: (agentId: string) => Promise<unknown>;
   supervisor?: CouncilOwnerSupervisorApi;
   autonomy?: CouncilOwnerAutonomyApi;
@@ -202,6 +203,7 @@ function ownerExactKeys(body: Record<string, unknown>, allowed: readonly string[
 
 const OWNER_ROUTE_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "/api/owner/start-lead": ["conversation_url", "project_name"],
+  "/api/owner/relay/start": ["lead_conversation_url", "peer_conversation_url", "peer_agent_id", "nonce", "task"],
   "/api/owner/agent/focus": ["agent_id"],
   "/api/owner/execution/runs": [],
   "/api/owner/execution/read": ["run_id"],
@@ -290,6 +292,17 @@ export function startCouncilHttpServer(
               const conversationUrl = ownerString(body, "conversation_url", 1_000);
               const projectName = ownerString(body, "project_name", 160);
               return ownerJson(await options.owner!.startLead({ conversationUrl, projectName }));
+            }
+
+            if (url.pathname === "/api/owner/relay/start") {
+              if (!options.owner?.startRelay) return ownerJson("Council owner relay is unavailable", 503);
+              return ownerJson(await options.owner.startRelay({
+                leadConversationUrl: ownerString(body, "lead_conversation_url", 1_000),
+                peerConversationUrl: ownerString(body, "peer_conversation_url", 1_000),
+                peerAgentId: ownerId(body, "peer_agent_id"),
+                nonce: ownerString(body, "nonce", 96),
+                task: ownerString(body, "task", 3_500),
+              }));
             }
 
             if (url.pathname === "/api/owner/agent/focus") return ownerJson(await options.owner!.focusAgent(ownerId(body, "agent_id")));

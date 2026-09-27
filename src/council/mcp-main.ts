@@ -19,6 +19,7 @@ import { runCouncilMcpServer } from "./mcp-server";
 import { CouncilObservationStore } from "./observation-store";
 import { issueCouncilOwnerControl } from "./owner-control";
 import { NodePlaywrightCouncilChatDriver } from "./node-playwright-council-driver";
+import { startCouncilOwnerRelay } from "./owner-relay";
 import { CouncilStaleWorkMonitor } from "./stale-work-monitor";
 import { CouncilStore } from "./store";
 import { CouncilSupervisor } from "./supervisor";
@@ -149,6 +150,7 @@ export async function runCouncilMcpMain(args: string[]): Promise<void> {
             wakeId: wake.id,
           };
         },
+        startRelay: async input => await startCouncilOwnerRelay(store, managedRuntime!, input, ownerToken),
         focusAgent: async (agentId: string) => {
           await managedRuntime!.focusAgentConversation(agentId);
           return { agentId, focused: true };

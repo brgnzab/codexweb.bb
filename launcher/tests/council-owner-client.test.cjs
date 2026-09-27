@@ -9,6 +9,7 @@ const {
   listObservations,
   readObservationScreenshot,
   setSupervisorManager,
+  startCouncilRelay,
   supervisorStatus,
 } = require("../electron/council-owner-client.cjs");
 
@@ -91,6 +92,38 @@ test("supervisor owner methods target explicit loopback operations without expos
       assert.equal(call.options.headers.authorization, `Bearer ${"c".repeat(64)}`);
       assert.equal(JSON.stringify(call.options.body).includes("c".repeat(64)), false);
     }
+  } finally { fixture.restore(); }
+});
+
+test("relay owner client sends only exact targets and bounded task through the protected loopback route", async () => {
+  const fixture = withOwnerDescriptor("council-owner-relay-", "r".repeat(64));
+  try {
+    let request;
+    const input = {
+      leadConversationUrl: "https://chatgpt.com/c/exact-A",
+      peerConversationUrl: "https://chatgpt.com/c/exact-B",
+      peerAgentId: "relay-b",
+      nonce: "CWC017-G9-UNIQUE-1234",
+      task: "Run the relay through Council actions.",
+    };
+    const result = await startCouncilRelay(input, {
+      timeoutMs: 250,
+      fetchImpl: async (url, options) => {
+        request = { url, options };
+        return { ok: true, status: 200, json: async () => ({ ok: true, result: { wakeId: "wake_1" } }) };
+      },
+    });
+    assert.deepEqual(result, { wakeId: "wake_1" });
+    assert.equal(request.url, "http://127.0.0.1:17842/api/owner/relay/start");
+    assert.deepEqual(JSON.parse(request.options.body), {
+      lead_conversation_url: input.leadConversationUrl,
+      peer_conversation_url: input.peerConversationUrl,
+      peer_agent_id: input.peerAgentId,
+      nonce: input.nonce,
+      task: input.task,
+    });
+    assert.equal(JSON.stringify(request.options.body).includes("r".repeat(64)), false);
+    await assert.rejects(() => startCouncilRelay({ ...input, peerConversationUrl: "https://evil.example/c/B" }, { fetchImpl: () => { throw new Error("must not send"); } }), /persistent ChatGPT conversation/);
   } finally { fixture.restore(); }
 });
 

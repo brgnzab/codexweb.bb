@@ -171,8 +171,12 @@ export class CouncilAgentManager {
       "</untrusted_council_data>",
       'Respond according to your role and end with one valid <COUNCIL_ACTIONS version="1"> block.',
     ].join("\n");
+    // A pre-bound peer may be receiving its first Council turn in an existing ChatGPT
+    // conversation. Give it the full action protocol before expecting it to relay a wake.
+    const firstManagedWake = !target.checkpoint
+      && !this.council.snapshot().messages.some(message => message.authorAgentId === target.id);
     try {
-      await this.runManagedAgent(target.id, delta, wake.roomId, depth + 1, full, undefined, () => {
+      await this.runManagedAgent(target.id, firstManagedWake ? full : delta, wake.roomId, depth + 1, full, undefined, () => {
         this.council.updateWake(wake.id, "target-running");
       }, onPhase);
       this.council.updateWake(wake.id, "replied");

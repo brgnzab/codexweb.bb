@@ -1,5 +1,6 @@
 import type { CouncilAgentRegistry } from "./agent-registry";
 import { CouncilAgentManager, type CouncilManagedSpawnInput } from "./agent-manager";
+import { assertChatGptConversationUrl } from "./conversation-registry";
 import type { CouncilBrowserCaptureResult, CouncilBrowserTransport, CouncilExecutionObserver, CouncilPromptAttachment } from "./browser-transport";
 import type { ParsedCouncilActionFooter } from "./browser-actions";
 import { assertCouncilDecisionGate } from "./decision-gate";
@@ -157,6 +158,32 @@ export class CouncilManagedRuntime {
     const child = manager.prepareSpawnAgent(sourceAgentId, input, project.roomId);
     await this.autonomy.enqueuePreparedSpawn({ sourceAgentId, targetAgentId: child.id, roomId: project.roomId, depth: 0 });
     return child;
+  }
+
+  prepareBoundRelayPeer(sourceAgentId: string, peerAgentId: string, conversationUrl: string): ManagedAgentRecord {
+    const project = this.requireProject();
+    if (sourceAgentId !== project.leadAgentId) throw new Error("Only the active managed Lead can prepare a relay peer");
+    const lead = this.managed.get(sourceAgentId);
+    if (!lead?.conversationUrl) throw new Error("The managed Lead has no bound conversation");
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(peerAgentId) || peerAgentId === sourceAgentId) throw new Error("relay peer agent id is invalid");
+    const url = assertChatGptConversationUrl(conversationUrl);
+    if (this.managed.list().some(agent => agent.id !== peerAgentId && agent.conversationUrl === url)) {
+      throw new Error("Relay peer conversation is already bound to another managed agent");
+    }
+    const existing = this.managed.get(peerAgentId);
+    if (existing) {
+      if (existing.conversationUrl !== url || !existing.permissions.includes("wake")) throw new Error("Existing relay peer binding does not match the requested conversation");
+      return existing;
+    }
+    if (this.council.snapshot().agents.some(agent => agent.id === peerAgentId)) throw new Error("Relay peer agent id is already in use");
+    const peer = this.managerFor(project).prepareSpawnAgent(sourceAgentId, {
+      requestedAgentId: peerAgentId,
+      name: "Council relay peer",
+      role: "Exact-thread relay participant",
+      mandate: "Respond only to Council wake tasks in this project, use Council SAY and WAKE actions for relay steps, and stop when the task directs you to stop.",
+      permissions: ["wake"],
+    }, project.roomId);
+    return this.managed.bindConversation(peer.id, url);
   }
 
   async executePreparedSpawn(agentId: string, roomId: string, depth = 0, onPhase?: CouncilExecutionObserver): Promise<ManagedAgentRecord> {

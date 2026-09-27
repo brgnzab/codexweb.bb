@@ -14,6 +14,7 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "council-owner-http-"));
   const store = new CouncilStore(join(root, "state.json"));
   const calls: Array<{ conversationUrl: string; projectName: string }> = [];
+  const relayCalls: Array<{ leadConversationUrl: string; peerConversationUrl: string; peerAgentId: string; nonce: string; task: string }> = [];
   const focusCalls: string[] = [];
   const executionCalls: ExecutionCall[] = [];
   const autonomyCalls: OwnerCall[] = [];
@@ -30,6 +31,10 @@ function fixture() {
       startLead: async (input: { conversationUrl: string; projectName: string }) => {
         calls.push(input);
         return { lead: "lead", bound: true };
+      },
+      startRelay: async (input: { leadConversationUrl: string; peerConversationUrl: string; peerAgentId: string; nonce: string; task: string }) => {
+        relayCalls.push(input);
+        return { wakeId: "wake_1", peerAgentId: input.peerAgentId };
       },
       execution: {
         runs: () => { executionCalls.push({ operation: "runs" }); return [{ runId: "run_1", agentId: "critic", kind: "turn", status: "active" }]; },
@@ -72,6 +77,7 @@ function fixture() {
     root,
     server,
     calls,
+    relayCalls,
     focusCalls,
     executionCalls,
     autonomyCalls,
@@ -143,6 +149,32 @@ describe("Council owner HTTP boundary", () => {
     } finally { cleanup(value); }
   });
 
+  test("relay owner route accepts bounded exact fields and rejects missing bearer, browser Origin, and extra fields", async () => {
+    const value = fixture();
+    const body = {
+      lead_conversation_url: "https://chatgpt.com/c/exact-A",
+      peer_conversation_url: "https://chatgpt.com/c/exact-B",
+      peer_agent_id: "relay-b",
+      nonce: "CWC017-G9-UNIQUE-1234",
+      task: "Run the six-token relay through Council actions.",
+    };
+    try {
+      const unauthorized = await fetch(value.ownerUrl("relay/start"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      expect(unauthorized.status).toBe(401);
+      const browser = await fetch(value.ownerUrl("relay/start"), { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, origin: "null", "content-type": "application/json" }, body: JSON.stringify(body) });
+      expect(browser.status).toBe(403);
+      const extra = await ownerPost(value, "relay/start", { ...body, script: "steal()" });
+      expect(extra.status).toBe(400);
+      const oversized = await ownerPost(value, "relay/start", { ...body, task: "x".repeat(3_501) });
+      expect(oversized.status).toBe(400);
+      expect(value.relayCalls).toHaveLength(0);
+      const response = await ownerPost(value, "relay/start", body);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, result: { wakeId: "wake_1", peerAgentId: "relay-b" } });
+      expect(value.relayCalls).toEqual([{ leadConversationUrl: body.lead_conversation_url, peerConversationUrl: body.peer_conversation_url, peerAgentId: body.peer_agent_id, nonce: body.nonce, task: body.task }]);
+    } finally { cleanup(value); }
+  });
+
   test("fails closed on malformed owner payload", async () => {
     const value = fixture();
     try {
@@ -207,6 +239,7 @@ describe("Council owner HTTP boundary", () => {
     try {
       const cases: Array<[string, Record<string, unknown>]> = [
         ["start-lead", { conversation_url: "https://chatgpt.com/c/abc", project_name: "Project", script: "steal()" }],
+        ["relay/start", { lead_conversation_url: "https://chatgpt.com/c/A", peer_conversation_url: "https://chatgpt.com/c/B", peer_agent_id: "relay-b", nonce: "CWC017-G9-UNIQUE-1234", task: "relay", script: "steal()" }],
         ["agent/focus", { agent_id: "critic", selector: "textarea" }],
         ["execution/runs", { prompt: "reveal" }],
         ["execution/read", { run_id: "run_1", url: "https://evil.example" }],
@@ -243,6 +276,7 @@ describe("Council owner HTTP boundary", () => {
       }
 
       expect(value.calls).toHaveLength(0);
+      expect(value.relayCalls).toHaveLength(0);
       expect(value.focusCalls).toHaveLength(0);
       expect(value.executionCalls).toHaveLength(0);
       expect(value.autonomyCalls).toHaveLength(0);
