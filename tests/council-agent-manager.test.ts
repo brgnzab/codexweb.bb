@@ -86,7 +86,13 @@ describe("CouncilAgentManager", () => {
           const body = step!.token === "acknowledgement" ? "acknowledged" : `${marker}:${step!.token}`;
           const actions: any[] = [{ type: "SAY", room_id: "core", body }];
           if (step!.next) actions.push({ type: "WAKE", room_id: "core", target_agent_id: step!.next, reason: `Continue public marker relay; emit ${marker}:${step!.nextToken}` });
-          else actions.push({ type: "SLEEP" });
+          else {
+            // Route the actual termination example supplied to the peer, rather
+            // than a hand-written SLEEP that could hide a prompt/schema mismatch.
+            const example = (input.prompt as string).split("\n").find(line => line.startsWith('{"actions":') && line.includes('"type":"SLEEP"'));
+            expect(example).toBeDefined();
+            return { answer: `${body}\n<COUNCIL_ACTIONS version="1">${example}</COUNCIL_ACTIONS>`, conversationUrl: input.conversationUrl, resumed: true };
+          }
           return { answer: `${body}\n<COUNCIL_ACTIONS version="1">\n${JSON.stringify({ actions })}\n</COUNCIL_ACTIONS>`, conversationUrl: input.conversationUrl, resumed: true };
         },
         async release() { return true; },
@@ -122,6 +128,9 @@ describe("CouncilAgentManager", () => {
         const parsed = parseCouncilActionFooter(`<COUNCIL_ACTIONS version="1">${example}</COUNCIL_ACTIONS>`);
         expect(parsed.batch.actions.map(action => action.type)).toEqual(["SAY", "WAKE"]);
         expect(parsed.batch.actions[1]).toMatchObject({ target_agent_id: steps[turn - 1]!.agent, room_id: "core" });
+        const stopExample = prompt.split("\n").find(line => line.startsWith('{"actions":') && line.includes('"type":"SLEEP"'))!;
+        const stop = parseCouncilActionFooter(`<COUNCIL_ACTIONS version="1">${stopExample}</COUNCIL_ACTIONS>`);
+        expect(stop.batch.actions).toEqual([{ type: "SAY", room_id: "core", body: "acknowledged" }, { type: "SLEEP" }]);
       }
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
@@ -130,6 +139,9 @@ describe("CouncilAgentManager", () => {
     { name: "WAKE body", action: { type: "WAKE", room_id: "core", target_agent_id: "lead", reason: "Continue", body: "A2" } },
     { name: "WAKE message", action: { type: "WAKE", room_id: "core", target_agent_id: "lead", reason: "Continue", message: "A2" } },
     { name: "WAKE missing reason", action: { type: "WAKE", room_id: "core", target_agent_id: "lead" } },
+    { name: "SLEEP room_id", action: { type: "SLEEP", room_id: "core" } },
+    { name: "SLEEP body", action: { type: "SLEEP", body: "acknowledged" } },
+    { name: "SLEEP reason", action: { type: "SLEEP", reason: "finished" } },
     { name: "capacity wording in invalid field", action: { type: "WAKE", room_id: "core", target_agent_id: "lead", reason: "Continue", "capacity is full": "untrusted" } },
     { name: "unknown target", action: { type: "WAKE", room_id: "core", target_agent_id: "unbound", reason: "Continue" } },
     { name: "invalid JSON", answer: '<COUNCIL_ACTIONS version="1">{bad}</COUNCIL_ACTIONS>' },

@@ -35,6 +35,7 @@ describe("Council owner relay setup", () => {
     if (handoff.type !== "WAKE") throw new Error("missing relay handoff");
     for (const step of ["A2", "B2", "A3", "B3"]) expect(handoff.reason).toContain(`${marker}:${step}`);
     expect(handoff.reason).toContain("SAY and SLEEP, no WAKE");
+    expect(handoff.reason).toContain('exactly {"type":"SLEEP"}, with no room_id or other fields');
     expect(handoff.reason).toContain("WAKE uses reason, never body or message");
     expect(ownerRelayActionGuidance({ ...input, sourceAgentId: "peer" })).toBeUndefined();
     expect(ownerRelayActionGuidance({ ...input, boundPeerAgentIds: [] })).toBeUndefined();

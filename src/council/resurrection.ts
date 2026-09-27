@@ -12,7 +12,13 @@ export function buildAgentActionProtocol(agent: ManagedAgentRecord, roomId: stri
     "Allowed actions: SAY, PROPOSE, REPLY, WAKE, SPAWN_AGENT, CREATE_TASK, UPDATE_TASK, REQUEST_REVIEW, FINAL_DECISION, CHECKPOINT, SLEEP.",
     'SAY requires exactly "type", "room_id", "body"; only "mentions" is optional. Put your visible contribution or requested marker in SAY.body.',
     'WAKE requires exactly "type", "room_id", "target_agent_id", "reason"; only "source_message_id" is optional. WAKE schedules a peer; it does not record your contribution. Never put "body", "message", or any other unknown field on WAKE.',
+    'SLEEP has exactly one field: {"type":"SLEEP"}. It has no optional fields. Never add room_id, body, message, reason, or target_agent_id to SLEEP. Record the final acknowledgement in a separate SAY action.',
     'When handing off, emit one SAY followed by one WAKE in the same actions array. Put the next peer task and continuation/stop conditions in WAKE.reason. Use only an already bound target agent ID. If the task is finished, emit SAY and SLEEP with no WAKE.',
+    'For a final acknowledgement, use this valid action payload inside your single terminal block (adapt only SAY.body to the requested acknowledgement):',
+    JSON.stringify({ actions: [
+      { type: "SAY", room_id: roomId, body: "acknowledged" },
+      { type: "SLEEP" },
+    ] }),
     ...(wakeSourceAgentId ? [
       `If this task calls for a handoff back to ${wakeSourceAgentId}, adapt this valid action payload inside your single terminal block (replace the example text with your contribution and next task):`,
       JSON.stringify({ actions: [
