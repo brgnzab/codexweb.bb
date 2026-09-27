@@ -39,7 +39,7 @@ function fixture(mode: "success" | "conversation-missing" | "delayed-success" = 
         send({ type: "council-event", id: message.id, observation: { type: "deep-state", state: "THINKING", confidence: 0.75, reason: "helper telemetry" } });
         send({ type: "council-result", id: message.id, value: { answer: "relay-ok", conversationUrl: "https://chatgpt.com/c/helper-test" } });
       };
-      if (${JSON.stringify(mode)} === "delayed-success") setTimeout(complete, 100);
+      if (${JSON.stringify(mode)} === "delayed-success") setTimeout(complete, 800);
       else complete();
     });
   `, { mode: 0o700 });
@@ -106,7 +106,7 @@ test("Council helper preserves conversation-unavailable semantics for safe resur
 
 test("helper readiness deadline ends at the ready handshake rather than the completed turn", async () => {
   const { descriptorPath } = fixture("delayed-success");
-  const driver = new NodePlaywrightCouncilChatDriver(descriptorPath, 25);
+  const driver = new NodePlaywrightCouncilChatDriver(descriptorPath, 500);
   const observations: unknown[] = [];
   const result = await driver.create({
     surfaceId: "launcher_surface_id_0123456789AB",
