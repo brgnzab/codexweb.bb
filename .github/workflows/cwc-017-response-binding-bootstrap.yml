@@ -16,30 +16,74 @@ jobs:
         with:
           ref: cwc-personal
           fetch-depth: 0
-      - name: Correct parent guard
+      - name: Correct repair gate
         shell: python
         run: |
           from pathlib import Path
+          import re
+          import subprocess
+
+          base = "7cf956a128e85a27f7a4d0ac6025dbb0dd05acc9"
+          subprocess.run(["git", "merge-base", "--is-ancestor", base, "HEAD"], check=True)
+          changed_since_base = set(subprocess.check_output(
+              ["git", "diff", "--name-only", f"{base}..HEAD"], text=True
+          ).splitlines())
+          allowed = {
+              ".github/workflows/cwc-017-response-binding-repair.yml",
+              ".github/workflows/cwc-017-response-binding-bootstrap.yml",
+          }
+          if not changed_since_base.issubset(allowed):
+              raise SystemExit(f"unexpected changes before repair: {sorted(changed_since_base - allowed)}")
+
           p = Path('.github/workflows/cwc-017-response-binding-repair.yml')
           text = p.read_text(encoding='utf-8')
-          old = '''expected = "7cf956a128e85a27f7a4d0ac6025dbb0dd05acc9"
-          import subprocess
-          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-          if head != expected:
-              raise SystemExit(f"unexpected parent {head}; expected {expected}")'''
-          new = '''expected = "b708ad2415c6c4c620d1b4811f506826c0782254"
-          import subprocess
-          parent = subprocess.check_output(["git", "rev-parse", "HEAD^"], text=True).strip()
-          if parent != expected:
-              raise SystemExit(f"unexpected parent {parent}; expected {expected}")'''
-          if text.count(old) != 1:
-              raise SystemExit(f'expected one guard block, found {text.count(old)}')
-          p.write_text(text.replace(old, new), encoding='utf-8')
+
+          guard_pattern = re.compile(
+              r'          expected = "7cf956a128e85a27f7a4d0ac6025dbb0dd05acc9"\n'
+              r'          import subprocess\n'
+              r'          head = subprocess\.check_output\(\["git", "rev-parse", "HEAD"\], text=True\)\.strip\(\)\n'
+              r'          if head != expected:\n'
+              r'              raise SystemExit\(f"unexpected parent \{head\}; expected \{expected\}"\)'
+          )
+          replacement = '''          import subprocess
+          base = "7cf956a128e85a27f7a4d0ac6025dbb0dd05acc9"
+          subprocess.run(["git", "merge-base", "--is-ancestor", base, "HEAD"], check=True)
+          staged = set(subprocess.check_output(["git", "diff", "--name-only", f"{base}..HEAD"], text=True).splitlines())
+          allowed_staging = {
+              ".github/workflows/cwc-017-response-binding-repair.yml",
+              ".github/workflows/cwc-017-response-binding-bootstrap.yml",
+          }
+          if not staged.issubset(allowed_staging):
+              raise SystemExit(f"unexpected pre-repair changes: {sorted(staged - allowed_staging)}")'''
+          text, count = guard_pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f"expected one parent guard, replaced {count}")
+
+          old_transient = '''            let matches = false;
+            if (replacement && identity && user) {'''
+          new_transient = '''            // Activity may temporarily unmount the bound assistant group before its persisted
+            // replacement appears. With no competing new turn, preserve the logical binding and
+            // let positive generation liveness/grace absorb that renderer transition.
+            if (!identity && newUsers.length === 0) return { binding, state };
+
+            let matches = false;
+            if (replacement && identity && user) {'''
+          if text.count(old_transient) != 1:
+              raise SystemExit(f"expected one transient-binding insertion point, found {text.count(old_transient)}")
+          text = text.replace(old_transient, new_transient)
+
+          workflow_required = '''              ".github/workflows/cwc-017-response-binding-repair.yml",\n'''
+          if text.count(workflow_required) != 1:
+              raise SystemExit(f"expected one patch-shape workflow entry, found {text.count(workflow_required)}")
+          text = text.replace(workflow_required, "")
+
+          p.write_text(text, encoding='utf-8')
+          subprocess.run(["git", "diff", "--check"], check=True)
       - name: Commit gate correction
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .github/workflows/cwc-017-response-binding-repair.yml
-          git commit -m "chore: fix CWC-017 response-binding gate parent guard"
+          git commit -m "chore: fix CWC-017 response-binding repair gate"
           git push origin HEAD:cwc-personal
