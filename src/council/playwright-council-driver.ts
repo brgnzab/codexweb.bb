@@ -371,8 +371,7 @@ async function reconcileCouncilResponseBinding(
   };
 }
 
-async function currentResponseObservation(responseTurn: Locator): Promise<{ text: string; completion: boolean }> {
-  return await responseTurn.evaluate((element, completionSelector) => {
+export function councilResponseObservation(element: Element, completionSelector: string): { text: string; completion: boolean } {
     const root = element as HTMLElement;
     const rendered = (candidate: HTMLElement) => {
       const style = getComputedStyle(candidate);
@@ -384,24 +383,40 @@ async function currentResponseObservation(responseTurn: Locator): Promise<{ text
     const activityContainers = [...root.querySelectorAll<HTMLElement>("[data-chatgpt-agent-turn-start]")]
       .map(marker => marker.parentElement)
       .filter((node): node is HTMLElement => Boolean(node));
-    const answers = [...root.querySelectorAll<HTMLElement>(answerRootSelector)]
+    const assistantContent = (candidate: HTMLElement) => {
+      if (!root.hasAttribute("data-turn-key")) return true;
+      const unit = candidate.closest("[data-content-search-unit-key]");
+      return unit
+        ? Boolean(unit.querySelector('[data-conversation-role="assistant"]')) && !unit.querySelector('[data-user-message-bubble]')
+        : activityContainers.some(container => container.contains(candidate));
+    };
+    const answerCandidates = (selector: string) => [...root.querySelectorAll<HTMLElement>(selector)]
       .filter(candidate => candidate.closest("[data-streaming-response-status]") === null)
-      .filter(candidate => {
-        if (!root.hasAttribute("data-turn-key") && !candidate.hasAttribute("data-markdown-text-style")) return true;
-        const unit = candidate.closest("[data-content-search-unit-key]");
-        return unit
-          ? Array.from(unit.children).some(child => child.getAttribute("data-conversation-role") === "assistant")
-          : activityContainers.some(container => container.contains(candidate));
-      })
+      .filter(assistantContent)
       .filter(rendered);
-    const text = answers.map(candidate => candidate.innerText.trim()).filter(Boolean).join("\n\n").trim();
+    const primary = answerCandidates(answerRootSelector);
+    const joinedText = (candidates: HTMLElement[]) => candidates.map(candidate => candidate.innerText.trim()).filter(Boolean).join("\n\n").trim();
+    // Activity/DIL can leave an empty markdown placeholder while rendering the answer in
+    // a non-markdown message body. Stay inside the bound assistant turn and its role unit.
+    const fallback = !joinedText(primary)
+      ? [
+          answerCandidates('[data-chatgpt-selection-message-id]'),
+          answerCandidates('.puik-root.not-markdown'),
+        ].find(candidates => Boolean(joinedText(candidates))) ?? []
+      : [];
+    const answers = joinedText(fallback) ? fallback : primary;
+    const text = joinedText(answers);
     const actions = [...root.querySelectorAll<HTMLElement>(completionSelector)].filter(rendered);
     const lastAnswer = answers.at(-1);
     const completion = root.hasAttribute("data-turn-key")
       ? Boolean(lastAnswer && actions.some(action => Boolean(lastAnswer.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING)))
       : actions.length > 0;
     return { text, completion };
-  }, CHATGPT_COMPLETION_ACTION_SELECTOR).catch(() => ({ text: "", completion: false }));
+}
+
+async function currentResponseObservation(responseTurn: Locator): Promise<{ text: string; completion: boolean }> {
+  return await responseTurn.evaluate(councilResponseObservation, CHATGPT_COMPLETION_ACTION_SELECTOR)
+    .catch(() => ({ text: "", completion: false }));
 }
 
 async function bodyDiagnosticText(page: Page): Promise<string> {

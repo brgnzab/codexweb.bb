@@ -5,7 +5,7 @@ import {
   CHATGPT_USER_TURN_SELECTOR,
   chatGptAssistantTurnSelector,
 } from "../src/chatgpt-session";
-import { councilAssistantCandidateIndex, councilNewTurnIdentity, councilReboundTurnIdentity } from "../src/council/playwright-council-driver";
+import { councilAssistantCandidateIndex, councilNewTurnIdentity, councilReboundTurnIdentity, councilResponseObservation } from "../src/council/playwright-council-driver";
 import { deriveCouncilChatGptState } from "../src/council/chatgpt-deep-state";
 
 describe("Council ChatGPT response binding", () => {
@@ -31,6 +31,44 @@ describe("Council ChatGPT response binding", () => {
     expect(() => councilNewTurnIdentity(baseline, [...baseline, "a", "b"])).toThrow("2 new conversation turns");
     expect(councilReboundTurnIdentity(baseline, "group:assistant:temp", ["group:assistant:temp"])).toBe("group:assistant:temp");
     expect(councilReboundTurnIdentity(baseline, "group:assistant:temp", [...baseline, "group:assistant:persisted"])).toBe("group:assistant:persisted");
+  });
+
+  test("reads a non-markdown assistant body when an empty markdown placeholder precedes completion controls", () => {
+    const originalStyle = globalThis.getComputedStyle;
+    const originalNode = globalThis.Node;
+    (globalThis as any).getComputedStyle = () => ({ display: "block", visibility: "visible" });
+    (globalThis as any).Node = { DOCUMENT_POSITION_FOLLOWING: 4 };
+    try {
+      const unit = (assistant: boolean) => ({
+        querySelector: (selector: string) => selector.includes('data-conversation-role="assistant"') && assistant ? {} : null,
+      });
+      const candidate = (text: string, assistant: boolean) => ({
+        innerText: text,
+        isConnected: true,
+        getBoundingClientRect: () => ({ width: 100, height: 20 }),
+        closest: (selector: string) => selector === "[data-content-search-unit-key]" ? unit(assistant) : null,
+        compareDocumentPosition: () => 4,
+      });
+      const placeholder = candidate("", true);
+      const answer = candidate("final answer", true);
+      const userText = candidate("submitted prompt", false);
+      const action = candidate("Copy", true);
+      const root = (body: typeof answer | undefined) => ({
+        hasAttribute: (name: string) => name === "data-turn-key",
+        querySelectorAll: (selector: string) => selector.includes("data-chatgpt-agent-turn-start") ? []
+          : selector.includes(".markdown") ? [placeholder]
+          : selector.includes("data-chatgpt-selection-message-id") ? []
+          : selector.includes(".puik-root.not-markdown") ? [userText, ...(body ? [body] : [])]
+          : [action],
+      });
+      expect(councilResponseObservation(root(answer) as unknown as Element, CHATGPT_COMPLETION_ACTION_SELECTOR))
+        .toEqual({ text: "final answer", completion: true });
+      expect(councilResponseObservation(root(undefined) as unknown as Element, CHATGPT_COMPLETION_ACTION_SELECTOR))
+        .toEqual({ text: "", completion: true });
+    } finally {
+      (globalThis as any).getComputedStyle = originalStyle;
+      (globalThis as any).Node = originalNode;
+    }
   });
 
   test("temporary response unmount is not DOM_DRIFT while generation remains live", () => {
