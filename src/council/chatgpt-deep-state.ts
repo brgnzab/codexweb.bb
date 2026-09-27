@@ -194,7 +194,10 @@ export function deriveCouncilChatGptState(
     return result("TOOL_RUNNING", 0.96, "Visible tool execution is active inside the ChatGPT turn.");
   }
 
-  if (domHealth.missingResponseSince && now - domHealth.missingResponseSince >= t.responseDomGraceMs) {
+  // Activity/Power UI may transiently unmount the assistant container while a live
+  // generation signal still proves the same submitted turn is running. Once liveness ends,
+  // the existing grace check becomes authoritative again.
+  if (domHealth.missingResponseSince && !running && now - domHealth.missingResponseSince >= t.responseDomGraceMs) {
     evidence.push("response_dom_disappeared");
     return result("DOM_DRIFT", 0.94, "A response surface that previously existed disappeared beyond the DOM grace window.");
   }

@@ -6,6 +6,7 @@ import {
   CHATGPT_STOP_BUTTON_SELECTOR,
   CHATGPT_USER_TURN_SELECTOR,
   assertAuthenticatedChatGptPage,
+  chatGptAssistantTurnSelector,
 } from "../chatgpt-session";
 import { connectLauncherBrowserHost } from "../launcher-browser-host";
 import type { CouncilExecutionObserver, CouncilExecutionPhaseObserver, CouncilPersistentChatDriver, CouncilPromptAttachment } from "./browser-transport";
@@ -216,19 +217,160 @@ async function attachFiles(
   phase(onPhase, onExecution, "files-attached");
 }
 
-async function currentAnswerText(responseTurn: Locator): Promise<string> {
-  return await responseTurn.evaluate(element => {
+interface CouncilTurnDomState {
+  turnIdentities: string[];
+  userIdentities: string[];
+  responseIdentities: string[];
+}
+
+interface CouncilResponseBinding {
+  identity: string;
+  locator: Locator;
+  acceptedTurnIdentities: readonly string[];
+}
+
+export function councilNewTurnIdentity(initial: readonly string[], current: readonly string[]): string | undefined {
+  const previous = new Set(initial);
+  const added = current.filter(identity => !previous.has(identity));
+  if (added.length > 1) throw new Error(`ChatGPT exposed ${added.length} new conversation turns for one submitted message`);
+  return added[0];
+}
+
+export function councilReboundTurnIdentity(initial: readonly string[], boundIdentity: string, current: readonly string[]): string | undefined {
+  if (current.includes(boundIdentity)) return boundIdentity;
+  return councilNewTurnIdentity(initial, current);
+}
+
+async function councilTurnDomState(page: Page): Promise<CouncilTurnDomState> {
+  return await page.evaluate(({ userSelector, assistantSelector }) => {
+    const unique = (values: Array<string | null | undefined>, label: string) => {
+      const clean = values.filter((value): value is string => Boolean(value));
+      if (new Set(clean).size !== clean.length) throw new Error(`ChatGPT exposed duplicate ${label} identities`);
+      return clean;
+    };
+    const legacyIdentity = (element: Element) =>
+      element.getAttribute("data-turn-id")
+      ?? element.getAttribute("data-testid")
+      ?? element.closest("[data-turn-id-container]")?.getAttribute("data-turn-id-container");
+    const legacy = (selector: string) => [...document.querySelectorAll(selector)].filter(element => !element.closest("[data-turn-key]"));
+    const userIdentities = unique(legacy(userSelector).map(legacyIdentity), "user turn");
+    const responseIdentities = unique(legacy(assistantSelector).map(legacyIdentity), "assistant turn");
+    const turnIdentities = [...new Set([...userIdentities, ...responseIdentities])];
+    const groups = [...document.querySelectorAll<HTMLElement>("[data-turn-key]")];
+    const keys = unique(groups.map(group => group.getAttribute("data-turn-key")), "group turn");
+    groups.forEach((group, index) => {
+      const key = keys[index]!;
+      const user = `group:user:${key}`;
+      const assistant = `group:assistant:${key}`;
+      // Preserve both logical roles in the baseline even if Activity temporarily unmounts one.
+      turnIdentities.push(user, assistant);
+      if (group.querySelector("[data-user-message-bubble]")) userIdentities.push(user);
+      if (group.querySelector('[data-conversation-role="assistant"], [data-chatgpt-agent-turn-start]')) responseIdentities.push(assistant);
+    });
+    return {
+      turnIdentities: [...new Set(turnIdentities)],
+      userIdentities: [...new Set(userIdentities)],
+      responseIdentities: [...new Set(responseIdentities)],
+    };
+  }, { userSelector: CHATGPT_USER_TURN_SELECTOR, assistantSelector: CHATGPT_ASSISTANT_TURN_SELECTOR });
+}
+
+function groupKeyFromUserIdentity(identity: string): string | undefined {
+  const prefix = "group:user:";
+  return identity.startsWith(prefix) ? identity.slice(prefix.length) : undefined;
+}
+
+async function userGroupMatchesSubmittedPrompt(page: Page, userIdentity: string, prompt: string): Promise<boolean> {
+  const key = groupKeyFromUserIdentity(userIdentity);
+  if (!key) return false;
+  const group = page.locator(`[data-turn-key=${JSON.stringify(key)}]`);
+  return await group.evaluate((element, submitted) => {
+    const bubbles = element.querySelectorAll<HTMLElement>("[data-user-message-bubble]");
+    const contents = bubbles.length === 1 ? bubbles[0]!.querySelectorAll<HTMLElement>("[data-search-result-target]") : [];
+    const normalize = (text: string) => text.replace(/\r\n?/g, "\n");
+    return contents.length === 1 && normalize(contents[0]!.innerText) === normalize(submitted);
+  }, prompt).catch(() => false);
+}
+
+async function reconcileCouncilResponseBinding(
+  page: Page,
+  baseline: CouncilTurnDomState,
+  prompt: string,
+  binding: CouncilResponseBinding | undefined,
+  acceptedUserIdentity?: string,
+): Promise<{ binding?: CouncilResponseBinding; state: CouncilTurnDomState }> {
+  const state = await councilTurnDomState(page);
+  if (!binding) {
+    const identity = councilNewTurnIdentity(baseline.turnIdentities, state.responseIdentities);
+    return {
+      binding: identity ? { identity, locator: page.locator(chatGptAssistantTurnSelector(identity)), acceptedTurnIdentities: state.turnIdentities } : undefined,
+      state,
+    };
+  }
+
+  const boundCount = await binding.locator.count();
+  if (boundCount === 1) return { binding, state };
+  if (boundCount > 1) throw new Error(`ChatGPT exposed ${boundCount} DOM nodes for the bound assistant turn`);
+
+  const acceptedTurns = new Set(binding.acceptedTurnIdentities);
+  const identity = councilReboundTurnIdentity(baseline.turnIdentities, binding.identity, state.responseIdentities);
+  const newUsers = state.userIdentities.filter(item => !baseline.turnIdentities.includes(item));
+  if (newUsers.length > 1) throw new Error(`ChatGPT exposed ${newUsers.length} new user turns while the bound assistant response was detached`);
+  const user = newUsers[0];
+
+  // Activity may temporarily unmount the accepted assistant group before the replacement
+  // appears. With no competing user evidence, keep waiting on the same logical turn.
+  if (!user) return { binding, state };
+  const userMatches = acceptedUserIdentity
+    ? user === acceptedUserIdentity
+    : await userGroupMatchesSubmittedPrompt(page, user, prompt);
+  if (!userMatches) throw new Error("ChatGPT opened another user turn while the bound assistant response was detached");
+  if (!identity) return { binding, state };
+
+  const replacement = identity
+    && binding.identity.startsWith("group:assistant:")
+    && user.startsWith("group:user:")
+    && identity === `group:assistant:${user.slice("group:user:".length)}`
+    && !state.turnIdentities.includes(binding.identity)
+    && state.turnIdentities.every(turn => baseline.turnIdentities.includes(turn) || acceptedTurns.has(turn) || turn === user || turn === identity);
+  if (!replacement) throw new Error("ChatGPT assistant response rebind did not match the accepted submitted turn");
+  return {
+    binding: { identity, locator: page.locator(chatGptAssistantTurnSelector(identity)), acceptedTurnIdentities: state.turnIdentities },
+    state,
+  };
+}
+
+async function currentResponseObservation(responseTurn: Locator): Promise<{ text: string; completion: boolean }> {
+  return await responseTurn.evaluate((element, completionSelector) => {
     const root = element as HTMLElement;
-    const rendered = [...root.querySelectorAll<HTMLElement>(".markdown")]
-      .filter(candidate => !candidate.parentElement?.closest(".markdown"))
+    const rendered = (candidate: HTMLElement) => {
+      const style = getComputedStyle(candidate);
+      const bounds = candidate.getBoundingClientRect();
+      return candidate.isConnected && bounds.width > 0 && bounds.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+    };
+    // ChatGPT's DIL/Activity renderers do not guarantee a .markdown wrapper.
+    const answerRootSelector = '.markdown, [data-message-author-role="assistant"] .puik-root.not-markdown > [class*="_DilResponseRoot"], [data-markdown-text-style="assistant-message"]';
+    const activityContainers = [...root.querySelectorAll<HTMLElement>("[data-chatgpt-agent-turn-start]")]
+      .map(marker => marker.parentElement)
+      .filter((node): node is HTMLElement => Boolean(node));
+    const answers = [...root.querySelectorAll<HTMLElement>(answerRootSelector)]
       .filter(candidate => candidate.closest("[data-streaming-response-status]") === null)
       .filter(candidate => {
-        const style = getComputedStyle(candidate);
-        const bounds = candidate.getBoundingClientRect();
-        return candidate.isConnected && bounds.width > 0 && bounds.height > 0 && style.display !== "none" && style.visibility !== "hidden";
-      });
-    return rendered.map(candidate => candidate.innerText.trim()).filter(Boolean).join("\n\n").trim();
-  }).catch(() => "");
+        if (!root.hasAttribute("data-turn-key") && !candidate.hasAttribute("data-markdown-text-style")) return true;
+        const unit = candidate.closest("[data-content-search-unit-key]");
+        return unit
+          ? Array.from(unit.children).some(child => child.getAttribute("data-conversation-role") === "assistant")
+          : activityContainers.some(container => container.contains(candidate));
+      })
+      .filter(rendered);
+    const text = answers.map(candidate => candidate.innerText.trim()).filter(Boolean).join("\n\n").trim();
+    const actions = [...root.querySelectorAll<HTMLElement>(completionSelector)].filter(rendered);
+    const lastAnswer = answers.at(-1);
+    const completion = root.hasAttribute("data-turn-key")
+      ? Boolean(lastAnswer && actions.some(action => Boolean(lastAnswer.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING)))
+      : actions.length > 0;
+    return { text, completion };
+  }, CHATGPT_COMPLETION_ACTION_SELECTOR).catch(() => ({ text: "", completion: false }));
 }
 
 async function bodyDiagnosticText(page: Page): Promise<string> {
@@ -285,11 +427,7 @@ async function sendAndWait(
   abortIfNeeded(signal);
   const composer = await attachExactPrompt(page, prompt, signal, onPhase, onExecution);
   await attachFiles(page, composer, attachments, onPhase, onExecution);
-  const assistantTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
-  const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
-  const initialAssistantCount = await assistantTurns.count();
-  const initialUserCount = await userTurns.count();
-  const responseTurn = assistantTurns.nth(initialAssistantCount);
+  const baseline = await councilTurnDomState(page);
   const send = composer.locator("xpath=ancestor::form[1]").getByTestId("send-button");
   await send.waitFor({ state: "visible", timeout: 20_000 });
   if (!await send.isEnabled()) throw new Error("ChatGPT Council send button is disabled after prompt attachment");
@@ -299,14 +437,18 @@ async function sendAndWait(
 
   const submissionDeadline = Date.now() + SUBMISSION_TIMEOUT_MS;
   let submissionObserved = false;
+  let acceptedUserIdentity: string | undefined;
+  let responseBinding: CouncilResponseBinding | undefined;
   while (Date.now() < submissionDeadline) {
     abortIfNeeded(signal);
-    const [users, assistants, running] = await Promise.all([
-      userTurns.count(),
-      assistantTurns.count(),
-      page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count(),
-    ]);
-    if (users > initialUserCount || assistants > initialAssistantCount || running > 0) {
+    const state = await councilTurnDomState(page);
+    const newUsers = state.userIdentities.filter(identity => !baseline.turnIdentities.includes(identity));
+    if (newUsers.length > 1) throw new Error(`ChatGPT exposed ${newUsers.length} new user turns for one submitted message`);
+    acceptedUserIdentity ??= newUsers[0];
+    const identity = councilNewTurnIdentity(baseline.turnIdentities, state.responseIdentities);
+    if (identity) responseBinding = { identity, locator: page.locator(chatGptAssistantTurnSelector(identity)), acceptedTurnIdentities: state.turnIdentities };
+    const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count();
+    if (acceptedUserIdentity || responseBinding || running > 0) {
       submissionObserved = true;
       phase(onPhase, onExecution, "submit-observed");
       break;
@@ -330,17 +472,20 @@ async function sendAndWait(
     if (page.isClosed()) throw new Error("ChatGPT Council browser surface closed during the turn");
     await approveCouncilToolIfNeeded(page);
     const now = Date.now();
-    const present = await responseTurn.count() > 0;
-    const text = present ? await currentAnswerText(responseTurn) : "";
+    const reconciled = await reconcileCouncilResponseBinding(page, baseline, prompt, responseBinding, acceptedUserIdentity);
+    responseBinding = reconciled.binding;
+    const present = Boolean(responseBinding && await responseBinding.locator.count() === 1);
+    const observation = present ? await currentResponseObservation(responseBinding!.locator) : { text: "", completion: false };
+    const text = observation.text;
     if (text !== lastText) {
       lastText = text;
       lastAssistantMutationAt = now;
     }
-    const [running, completion, waitingUser] = await Promise.all([
+    const [running, waitingUser] = await Promise.all([
       page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count().then(count => count > 0),
-      present ? responseTurn.locator(CHATGPT_COMPLETION_ACTION_SELECTOR).filter({ visible: true }).count().then(count => count > 0) : Promise.resolve(false),
       genericUserInputRequired(page),
     ]);
+    const completion = observation.completion;
     const statusSignature = `${present}:${running}:${completion}:${waitingUser}`;
     if (statusSignature !== lastStatusSignature) {
       lastStatusSignature = statusSignature;
