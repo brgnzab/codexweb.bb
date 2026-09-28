@@ -31,6 +31,11 @@ const api = window.codexWebLauncher;
 const api36 = api as (typeof api & Council36Api);
 type View = "overview" | "relay" | "chatgpt" | "agents" | "work" | "executions" | "memory" | "connections" | "diagnostics" | "settings";
 
+// Manual-entry drafts live only in renderer memory. They survive page navigation/unmounts but are
+// intentionally not written to disk, browser storage, auth/session state, logs, or Council runtime state.
+let connectionDraft = { tunnelId: "", runtimeKey: "" };
+let memoryQueryDraft = "";
+
 const NAV: Array<{ id: View; label: string; hint: string; group: "workspace" | "intelligence" | "system" }> = [
   { id: "overview", label: "Overview", hint: "Mission and attention", group: "workspace" },
   { id: "relay", label: "Project relay", hint: "Work between your chats", group: "workspace" },
@@ -265,10 +270,13 @@ function ManagerControl({ agents }: { agents: ManagedAgentView[] }) {
 }
 
 function ConnectionsWorkspace({ connections, snapshot, busy, onVerify, onOpenConnectorSetup }: { connections: CouncilConnectionNode[]; snapshot: LauncherSnapshot; busy: boolean; onVerify: () => void; onOpenConnectorSetup: () => void }) {
-  const [tunnelId, setTunnelId] = useState("");
-  const [runtimeKey, setRuntimeKey] = useState("");
+  const [tunnelId, setTunnelIdState] = useState(() => connectionDraft.tunnelId);
+  const [runtimeKey, setRuntimeKeyState] = useState(() => connectionDraft.runtimeKey);
   const [setupBusy, setSetupBusy] = useState(false);
   const [setupMessage, setSetupMessage] = useState<string | null>(null);
+  const setTunnelId = (value: string) => { connectionDraft = { ...connectionDraft, tunnelId: value }; setTunnelIdState(value); };
+  const setRuntimeKey = (value: string) => { connectionDraft = { ...connectionDraft, runtimeKey: value }; setRuntimeKeyState(value); };
+  const clearInputs = () => { connectionDraft = { tunnelId: "", runtimeKey: "" }; setTunnelIdState(""); setRuntimeKeyState(""); };
   const connect = async () => {
     if (!api || setupBusy) return;
     setSetupBusy(true); setSetupMessage(null);
@@ -287,7 +295,7 @@ function ConnectionsWorkspace({ connections, snapshot, busy, onVerify, onOpenCon
     <div className="connection-setup-grid">
       <section className="connection-setup-pane"><div className="connection-setup-heading"><div><span className="connection-setup-label">Secure tunnel</span><h3>Connect secure tunnel</h3></div><em className={snapshot.mcpCredentialsConfigured ? "good" : "muted"}>{snapshot.mcpCredentialsConfigured ? "credentials saved" : "not configured"}</em></div><p>The Tunnel starts the local Council MCP runtime. It is not the same thing as ChatGPT seeing the connector.</p>
         {!snapshot.mcpCredentialsConfigured ? <div className="connection-fields"><label><span>Tunnel ID</span><input value={tunnelId} onChange={event => setTunnelId(event.target.value)} placeholder="tunnel_…" autoComplete="off" spellCheck={false} /></label><label><span>Tunnels Read + Use key</span><input type="password" value={runtimeKey} onChange={event => setRuntimeKey(event.target.value)} placeholder="Paste runtime key" autoComplete="off" /></label></div> : null}
-        <div className="connection-actions"><button className="primary" disabled={setupBusy || !canConnect} onClick={() => void connect()}>{setupBusy ? "Connecting…" : snapshot.mcpCredentialsConfigured ? "Reconnect saved tunnel" : "Connect secure tunnel"}</button><button disabled={setupBusy} onClick={() => void api!.openExternal(snapshot.urls.tunnels)}>Open Tunnel settings</button></div>{setupMessage ? <p className="connection-setup-message">{setupMessage}</p> : null}
+        <div className="connection-actions"><button className="primary" disabled={setupBusy || !canConnect} onClick={() => void connect()}>{setupBusy ? "Connecting…" : snapshot.mcpCredentialsConfigured ? "Reconnect saved tunnel" : "Connect secure tunnel"}</button><button disabled={setupBusy} onClick={() => void api!.openExternal(snapshot.urls.tunnels)}>Open Tunnel settings</button><button disabled={setupBusy || (!tunnelId && !runtimeKey)} onClick={clearInputs}>CLEAR</button></div>{setupMessage ? <p className="connection-setup-message">{setupMessage}</p> : null}
       </section>
       <section className="connection-setup-pane"><div className="connection-setup-heading"><div><span className="connection-setup-label">ChatGPT capability</span><h3>Optional MCP connector</h3></div></div><p>Create the exact <code>CodexWeb Council</code> connector on the same Tunnel when your ChatGPT workspace supports it. Managed browser turns remain usable without this connector.</p><div className="connection-actions"><button onClick={onOpenConnectorSetup}>Open connector settings</button><button disabled={busy} onClick={onVerify}>Verify current session</button></div></section>
     </div>
@@ -353,12 +361,13 @@ function AutonomyPanel({ roomId, shared }: { roomId: string | null; shared: Coun
 }
 
 function MemoryPanel({ roomId }: { roomId: string | null }) {
-  const [query, setQuery] = useState("");
+  const [query, setQueryState] = useState(() => memoryQueryDraft);
   const [stats, setStats] = useState<CouncilMemoryStatsView | null>(null);
   const [storage, setStorage] = useState<CouncilEvidenceStatsView>(null);
   const [results, setResults] = useState<CouncilMemoryView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
+  const setQuery = (value: string) => { memoryQueryDraft = value; setQueryState(value); };
   const loadRecent = useCallback(async () => {
     if (!roomId || !api36?.councilMemoryRecent) { setResults([]); return; }
     const [nextStats, nextStorage, recent] = await Promise.all([api36.councilMemoryStats(roomId), api36.councilObservationStorage(), api36.councilMemoryRecent(roomId, 30)]);
@@ -381,7 +390,7 @@ function MemoryPanel({ roomId }: { roomId: string | null }) {
   };
   return <div className="council-page council-36-page"><header><span>LONG-HORIZON CONTINUITY</span><h2>Memory</h2><p>Safe bounded project knowledge is retained with provenance. Raw browser pages, credentials, conversation URLs, checkpoints and screenshot bytes are not exposed here.</p></header>
     <div className="council-36-kpis"><article><span>MEMORY ENTRIES</span><strong>{stats?.entries ?? 0}</strong><small>{stats?.newestAt ? `latest ${new Date(stats.newestAt).toLocaleString()}` : "empty index"}</small></article><article><span>EVIDENCE BLOBS</span><strong>{storage?.blobs ?? 0}</strong><small>{storage ? `${storage.references} refs · ${bytes(storage.bytes)}` : "not available"}</small></article><article><span>DEDUP BUDGET</span><strong>{storage ? bytes(storage.maxBytes) : "—"}</strong><small>{storage?.overBudget ? "over budget; prune sources" : "content-addressed archive"}</small></article><article><span>PROJECT</span><strong>{roomId ?? "—"}</strong><small>memory is room-scoped</small></article></div>
-    <section className="council-36-section"><div className="council-36-search"><input value={query} placeholder="Search project decisions, tasks, observations, audit evidence…" onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void search(); }} disabled={!roomId || working} /><button className="primary" disabled={!roomId || query.trim().length < 2 || working} onClick={() => void search()}>Search</button><button disabled={!roomId || working} onClick={() => void loadRecent()}>Recent</button><button className="danger" disabled={!roomId || working} onClick={() => void clear()}>Clear retained index</button></div>{error ? <p className="council-36-inline-error">{error}</p> : null}
+    <section className="council-36-section"><div className="council-36-search"><input value={query} placeholder="Search project decisions, tasks, observations, audit evidence…" onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void search(); }} disabled={!roomId || working} /><button className="primary" disabled={!roomId || query.trim().length < 2 || working} onClick={() => void search()}>Search</button><button disabled={!roomId || working} onClick={() => void loadRecent()}>Recent</button><button disabled={working || !query} onClick={() => setQuery("")}>CLEAR</button><button className="danger" disabled={!roomId || working} onClick={() => void clear()}>Clear retained index</button></div>{error ? <p className="council-36-inline-error">{error}</p> : null}
       {results.length ? <div className="council-36-memory-list">{results.map(item => <article key={item.id}><div className="council-36-row"><strong>{item.sourceType}</strong><em>{item.score < 1 ? `${Math.round(item.score * 100)}%` : "recent"}</em></div><p>{item.text}</p><small>source {item.provenance.sourceType}:{item.provenance.sourceId}{item.agentIds.length ? ` · agents ${item.agentIds.join(", ")}` : ""}{item.taskIds.length ? ` · tasks ${item.taskIds.join(", ")}` : ""}</small></article>)}</div> : <div className="council-36-empty">{roomId ? "No retained memory matches this view yet." : "Bind a managed Council project to use project memory."}</div>}
     </section>
   </div>;

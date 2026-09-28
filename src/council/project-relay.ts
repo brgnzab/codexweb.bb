@@ -11,7 +11,9 @@ export type ProjectRelay = { id: string; requestId: string; name: string; task: 
 export type RelayInput = { requestId: string; name: string; task: string; peers: [RelayPeer, RelayPeer]; maxTurns?: number };
 export interface RelayGwDriver { run(peer: RelayPeer, prompt: string, deliveryId: string): Promise<string> }
 const terminal = new Set<RelayState>(["blocked", "uncertain", "uat-ready", "cancelled"]);
+const unresolved = new Set<RelayState>(["running", "blocked", "uncertain"]);
 function conversationKey(peer: RelayPeer): string { return peer.kind === "gw" ? new URL(peer.conversation).pathname.slice(3).toLowerCase() : peer.conversation.toLowerCase(); }
+function reservesBindings(session: ProjectRelay): boolean { return unresolved.has(session.state) || session.turns.some(turn => turn.state === "submitted"); }
 function text(value: unknown, name: string, max: number): string {
   if (typeof value !== "string" || !value.trim() || value.length > max) throw new Error(`${name} must be nonempty text of at most ${max} characters`);
   return value.trim();
@@ -103,7 +105,7 @@ export class ProjectRelayService {
   assertBrowserAccess(conversation: string | undefined, agentId: string): void {
     if (!conversation) return;
     const key = conversationKey({ name: "", kind: "gw", conversation });
-    const reservation = this.sessions.find(session => (session.state === "running" || session.state === "uncertain" || session.turns.some(turn => turn.state === "submitted")) && session.peers.some(peer => conversationKey(peer) === key));
+    const reservation = this.sessions.find(session => reservesBindings(session) && session.peers.some(peer => conversationKey(peer) === key));
     if (!reservation) return;
     const turn = reservation.turns.at(-1)!;
     if (reservation.state !== "running" || turn.state !== "submitted" || agentId !== `relay-${turn.id}` || conversationKey(reservation.peers[turn.peer]!) !== key) throw new Error("This conversation is reserved by an active or unresolved project relay");
@@ -122,7 +124,7 @@ export class ProjectRelayService {
     const peers = raw.peers.map(relayPeer) as [RelayPeer, RelayPeer];
     if (peers.some(peer => peer.conversation === this.bridge?.worker)) throw new Error("The controller chat cannot also be a project participant");
     if (conversationKey(peers[0]) === conversationKey(peers[1])) throw new Error("Choose two different chats");
-    if (this.sessions.some(session => (session.state === "running" || session.state === "uncertain" || session.turns.some(turn => turn.state === "submitted")) && session.peers.some(peer => peers.some(other => conversationKey(other) === conversationKey(peer))))) throw new Error("A selected chat already belongs to an active or unresolved relay");
+    if (this.sessions.some(session => reservesBindings(session) && session.peers.some(peer => peers.some(other => conversationKey(other) === conversationKey(peer))))) throw new Error("A selected chat already belongs to an active or unresolved relay");
     const maxTurns = raw.maxTurns ?? 20;
     if (!Number.isInteger(maxTurns) || maxTurns < 2 || maxTurns > 100) throw new Error("Turn budget must be 2–100");
     const session: ProjectRelay = { id: randomUUID(), requestId, name: text(raw.name, "Project name", 160), task: text(raw.task, "Task", 12000), peers, maxTurns, state: "running", turns: [], createdAt: new Date(this.now()).toISOString() };
@@ -171,8 +173,9 @@ export class ProjectRelayService {
             const answer = await this.gw.run(session.peers[turn.peer]!, turn.prompt, turn.id);
             this.accept(session, turn, answer, turn.id);
           } catch (error) {
-            turn.state = "failed";
-            if (session.state === "running") { session.state = "uncertain"; session.result = error instanceof Error ? error.message : "Relay failed; inspect the bound chat"; }
+            // Submission is ambiguous after the send boundary. Keep it submitted so cancellation cannot
+            // release/reuse the bound chat until exact-response reconciliation proves it safe.
+            if (session.state === "running") { session.state = "uncertain"; session.result = error instanceof Error ? error.message : "Relay failed after submission; inspect the bound chat"; }
           }
           this.persist(); this.rerun = true;
         }
@@ -216,13 +219,21 @@ export class ProjectRelayService {
     if (turn.state !== "submitted") throw new Error("Desktop delivery has not been submitted");
     text(receipt, "Exact response receipt", 200);
     try { this.accept(session, turn, answer, receipt); }
-    catch (error) { turn.state = "failed"; if (session.state === "running") { session.state = "uncertain"; session.result = error instanceof Error ? error.message : "Invalid relay result"; } }
+    catch (error) {
+      // An exact receipt resolves duplicate-send ambiguity even if the returned answer itself is invalid.
+      turn.receipt = receipt; turn.state = "failed";
+      if (session.state === "running") { session.state = "uncertain"; session.result = error instanceof Error ? error.message : "Invalid relay result"; }
+    }
     this.persist(); this.kick();
   }
   fail(relayId: string, deliveryId: string, lease: string, reason: string): void {
     const { session, turn } = this.claimed(relayId, deliveryId, lease);
     if (turn.state !== "claimed" && turn.state !== "submitted") throw new Error("Desktop delivery already settled");
-    if (session.state === "running") { session.state = turn.state === "submitted" ? "uncertain" : "blocked"; session.result = text(reason, "Blocker", 1000); }
-    turn.state = "failed"; this.persist();
+    const wasSubmitted = turn.state === "submitted";
+    if (session.state === "running") { session.state = wasSubmitted ? "uncertain" : "blocked"; session.result = text(reason, "Blocker", 1000); }
+    // Once submitted, keep the delivery in the submitted state until exact-response reconciliation.
+    // A claimed-only failure is safe to mark failed and may be released after the owner stops the relay.
+    if (!wasSubmitted) turn.state = "failed";
+    this.persist();
   }
 }
