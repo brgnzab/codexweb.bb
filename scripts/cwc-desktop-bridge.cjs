@@ -4,7 +4,7 @@ const path = require("node:path");
 const { ownerRequest } = require("../launcher/electron/council-owner-client.cjs");
 const { assertReady, completedAnswer } = require("../launcher/electron/project-relay-desktop.cjs");
 
-async function run(request, send = ownerRequest) {
+async function run(request, send = ownerRequest, controllerId = process.env.CODEX_THREAD_ID) {
   const fields = {
     list: ["operation"],
     claim: ["operation", "worker"],
@@ -14,13 +14,18 @@ async function run(request, send = ownerRequest) {
   };
   if (!request || typeof request !== "object" || Array.isArray(request) || !fields[request.operation] || Object.keys(request).some(key => !fields[request.operation].includes(key))) throw new Error("Invalid desktop bridge request");
   if (request.operation === "list") return send("project-relay/list");
-  if (request.operation === "claim") return send("project-relay/claim", { worker: request.worker });
+  if (request.operation === "claim") {
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(controllerId ?? "")) throw new Error("Run the desktop bridge inside the owner-authorized Codex controller chat; CODEX_THREAD_ID is missing");
+    if (request.worker !== undefined && request.worker !== controllerId) throw new Error("Claim worker must match this Codex chat; omit worker to use CODEX_THREAD_ID automatically");
+    return send("project-relay/claim", { worker: controllerId });
+  }
   const ids = { relay_id: request.relay_id, delivery_id: request.delivery_id, lease: request.lease };
   if (request.operation === "fail") return send("project-relay/fail", { ...ids, reason: request.reason });
   const snapshot = await send("project-relay/list");
   const session = snapshot.relays.find(relay => relay.id === ids.relay_id);
   const turn = session?.turns.find(turn => turn.id === ids.delivery_id);
   if (!turn || turn.lease !== ids.lease) throw new Error("Desktop delivery lease does not match");
+  if (!controllerId || turn.worker !== controllerId) throw new Error("This delivery belongs to a different controller; do not send or replay");
   const job = { target: session.peers[turn.peer], prompt: turn.prompt, worker: turn.worker };
   if (request.operation === "prepare") {
     if (turn.state !== "claimed") throw new Error("Delivery is no longer eligible to send; reconcile only");

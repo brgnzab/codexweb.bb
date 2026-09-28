@@ -141,6 +141,15 @@ describe("Durability and no duplicate submissions", () => {
 });
 
 describe("Native desktop adapter", () => {
+  test("helper derives claim identity from Codex and rejects mistyped or missing controller identity", async () => {
+    const calls: unknown[] = [];
+    const send = async (operation: string, body: unknown) => { calls.push({ operation, body }); return null; };
+    await bridgeRun({ operation: "claim" }, send, controllerId);
+    expect(calls).toEqual([{ operation: "project-relay/claim", body: { worker: controllerId } }]);
+    await expect(bridgeRun({ operation: "claim", worker: "20000000-0000-0000-0000-000000000002" }, send, controllerId)).rejects.toThrow("must match");
+    await expect(bridgeRun({ operation: "claim", worker: controllerId }, send, "")).rejects.toThrow("CODEX_THREAD_ID");
+    expect(calls).toHaveLength(1);
+  });
   test("oversized desktop input is blocked before submit rather than becoming unreadable", async () => {
     const job = { target: peer("codex", 0), worker: controllerId, prompt: "x".repeat(20000) };
     expect(() => assertReady(job, { ...native(job, ""), turns: [] })).toThrow("full-read limit");
@@ -149,7 +158,7 @@ describe("Native desktop adapter", () => {
     await expect(bridgeRun(request, async (operation: string) => {
       if (operation === "project-relay/list") return { relays: [{ id: "relay", peers: [job.target], turns: [{ id: "delivery", peer: 0, lease: "lease", worker: controllerId, prompt: job.prompt, state: "claimed" }] }] };
       submitted = true; throw new Error("Must not reach submission");
-    })).rejects.toThrow("full-read limit");
+    }, controllerId)).rejects.toThrow("full-read limit");
     expect(submitted).toBe(false);
   });
   test.each(["codex", "work"] as const)("correlates actual incoming native %s envelope and prevents a second send", kind => {
@@ -230,16 +239,18 @@ describe("Native desktop adapter", () => {
       if (operation === "project-relay/complete") { service.finish(body.relay_id, body.delivery_id, body.lease, body.answer, body.receipt); return { accepted: true }; }
       throw new Error("Unexpected operation");
     };
-    const job = await bridgeRun({ operation: "claim", worker: controllerId }, send);
+    const job = await bridgeRun({ operation: "claim" }, send, controllerId);
     const base = { relay_id: job.relayId, delivery_id: job.deliveryId, lease: job.lease };
     const empty = { ...native(job, ""), turns: [] };
-    const prepared = await bridgeRun({ operation: "prepare", ...base, snapshot: empty }, send);
+    await expect(bridgeRun({ operation: "prepare", ...base, snapshot: empty }, send, "20000000-0000-0000-0000-000000000002")).rejects.toThrow("different controller");
+    expect(service.list()[0]!.turns[0]!.state).toBe("claimed");
+    const prepared = await bridgeRun({ operation: "prepare", ...base, snapshot: empty }, send, controllerId);
     expect(prepared).toEqual({ sendOnce: true, threadId: job.target.conversation, prompt: job.prompt });
     expect(service.list()[0]!.turns[0]!.state).toBe("submitted");
-    await expect(bridgeRun({ operation: "prepare", ...base, snapshot: empty }, send)).rejects.toThrow();
+    await expect(bridgeRun({ operation: "prepare", ...base, snapshot: empty }, send, controllerId)).rejects.toThrow();
     const completed = delegated({ ...job, worker: controllerId }, answer(0));
-    await bridgeRun({ operation: "complete", ...base, snapshot: completed }, send);
-    await bridgeRun({ operation: "complete", ...base, snapshot: completed }, send);
+    await bridgeRun({ operation: "complete", ...base, snapshot: completed }, send, controllerId);
+    await bridgeRun({ operation: "complete", ...base, snapshot: completed }, send, controllerId);
     expect(service.list()[0]!.turns).toHaveLength(2);
     expect(service.list()[0]!.turns[1]!.prompt).toContain("Implementation and test evidence");
   });
