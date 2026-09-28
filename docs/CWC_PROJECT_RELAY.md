@@ -6,6 +6,8 @@ Remove the owner from copying prompts/results between existing GPT Web, Codex, a
 
 The owner selected existing desktop chats. Dedicated CLI conversations are not a substitute. The bridge controller, when authorized, is only a courier; it is not a replacement project participant. No merge, tag, release, or UAT approval is implied.
 
+The owner's latest priority is a usable, robust **GPT Web ↔ existing Codex chat** app first. Native-to-native transport can use Codex's own messaging; broader orchestration and the other pairings are deferred from this repair's acceptance gate. Existing support remains available, but must not delay proving this core browser bridge.
+
 ## Project relay
 
 The launcher Project relay page accepts two existing chat bindings, a project task, and a turn budget. Participant 1 works; participant 2 reviews and can request more work. Completed visible answers alternate between the two fixed destinations. Participants cannot change the destination or grant themselves additional permissions. Existing project context and permissions remain in effect.
@@ -31,4 +33,4 @@ The controller setup instructions are in [CWC_DESKTOP_CONTROLLER.md](CWC_DESKTOP
 
 ## Validation boundary
 
-DEV tests exercise routing, native response correlation, HTTP authorization, cancellation, restart, and duplicate prevention with controlled adapters. They are not proof of independent live G9/G10 acceptance. Live acceptance must demonstrate useful task delivery, review/repair, and a final result across all three pairings in existing chats, with unchanged control chats and no duplicate submissions. Marker loops are supporting diagnostics, not the product goal. Report actual defects and coverage; do not claim a statistical defect-free percentage from a test count.
+DEV tests exercise routing, native response correlation, HTTP authorization, cancellation, restart, and duplicate prevention with controlled adapters. They are not proof of independent live G9/G10 acceptance. The immediate live gate must demonstrate useful GPT Web ↔ Codex task delivery in both directions, review/repair, and a final result in existing chats without duplicate submissions. Broader pairing coverage is deferred under the owner's latest priority. Marker loops are supporting diagnostics, not the product goal. Report actual defects and coverage; do not claim a statistical defect-free percentage from a test count.

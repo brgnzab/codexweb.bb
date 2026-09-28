@@ -21,7 +21,7 @@ async function run(request, send = ownerRequest) {
   const session = snapshot.relays.find(relay => relay.id === ids.relay_id);
   const turn = session?.turns.find(turn => turn.id === ids.delivery_id);
   if (!turn || turn.lease !== ids.lease) throw new Error("Desktop delivery lease does not match");
-  const job = { target: session.peers[turn.peer], prompt: turn.prompt };
+  const job = { target: session.peers[turn.peer], prompt: turn.prompt, worker: turn.worker };
   if (request.operation === "prepare") {
     if (turn.state !== "claimed") throw new Error("Delivery is no longer eligible to send; reconcile only");
     assertReady(job, request.snapshot);

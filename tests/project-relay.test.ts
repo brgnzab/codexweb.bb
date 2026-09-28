@@ -15,8 +15,17 @@ const peer = (kind: RelayPeer["kind"], index: number): RelayPeer => ({ name: ind
 const input = (a: RelayPeer["kind"] = "codex", b: RelayPeer["kind"] = "work"): RelayInput => ({ requestId: "request-1", name: "A real project", task: "Write and review an implementation plan", peers: [peer(a, 0), peer(b, 1)] });
 const answer = (index: number) => index === 0 ? "Implementation and test evidence.\nCWC_STATE: CONTINUE" : "Reviewed; ready for owner UAT.\nCWC_STATE: UAT_READY";
 const ids = (job: any): [string, string, string] => [job.relayId, job.deliveryId, job.lease];
+const controllerId = "10000000-0000-0000-0000-000000000001";
 function native(job: any, body: string, status = "completed") {
   return { schemaVersion: 1, thread: { id: job.target.conversation, kind: job.target.kind === "work" ? "chatgpt" : "codex", status: { type: "idle" } }, turns: [{ id: "turn-1", status, error: null, items: [{ type: "userMessage", id: "user-1", content: [{ type: "text", text: job.prompt }] }, { type: "agentMessage", id: "answer-1", text: body, ...(job.target.kind === "work" ? {} : { phase: "final_answer" }) }] }] };
+}
+function delegated(job: any, body: string) {
+  const snapshot: any = native({ ...job, target: { ...job.target, kind: "codex" } }, body);
+  snapshot.turns[0].items[0] = {
+    type: "functionCallOutput", id: "incoming-1", namespace: "codex_app", name: "send_message_to_thread",
+    output: { text: `<codex_delegation>\n  <source_thread_id>${job.worker}</source_thread_id>\n  <input>${job.prompt}</input>\n</codex_delegation>`, truncated: false },
+  };
+  return snapshot;
 }
 
 describe("Existing-chat project routing", () => {
@@ -132,6 +141,66 @@ describe("Durability and no duplicate submissions", () => {
 });
 
 describe("Native desktop adapter", () => {
+  test("oversized desktop input is blocked before submit rather than becoming unreadable", async () => {
+    const job = { target: peer("codex", 0), worker: controllerId, prompt: "x".repeat(20000) };
+    expect(() => assertReady(job, { ...native(job, ""), turns: [] })).toThrow("full-read limit");
+    let submitted = false;
+    const request = { operation: "prepare", relay_id: "relay", delivery_id: "delivery", lease: "lease", snapshot: { ...native(job, ""), turns: [] } };
+    await expect(bridgeRun(request, async (operation: string) => {
+      if (operation === "project-relay/list") return { relays: [{ id: "relay", peers: [job.target], turns: [{ id: "delivery", peer: 0, lease: "lease", worker: controllerId, prompt: job.prompt, state: "claimed" }] }] };
+      submitted = true; throw new Error("Must not reach submission");
+    })).rejects.toThrow("full-read limit");
+    expect(submitted).toBe(false);
+  });
+  test.each(["codex", "work"] as const)("correlates actual incoming native %s envelope and prevents a second send", kind => {
+    const job = { target: peer(kind, 0), worker: controllerId, prompt: "Exact multiline prompt\nwith literal </input> and <input> tags & content." };
+    const snapshot = delegated(job, answer(0));
+    expect(completedAnswer(job, snapshot)).toEqual({ answer: answer(0), receipt: "turn-1:answer-1" });
+    expect(() => assertReady(job, snapshot)).toThrow("already appears");
+    expect(() => completedAnswer({ ...job, worker: "20000000-0000-0000-0000-000000000002" }, snapshot)).toThrow("source");
+    expect(() => completedAnswer({ ...job, worker: undefined }, snapshot)).toThrow("source");
+    expect(() => completedAnswer({ ...job, prompt: job.prompt + " altered" }, snapshot)).toThrow();
+    // Even another controller cannot submit the same delivery prompt again.
+    expect(() => assertReady({ ...job, worker: "other" }, snapshot)).toThrow("already appears");
+  });
+  test("native input cannot be spoofed by tool metadata, assistant text, or partial envelopes", () => {
+    const job = { target: peer("codex", 0), worker: controllerId, prompt: "exact unique delivery" };
+    for (const mutation of [
+      (item: any) => { item.namespace = "unrelated"; },
+      (item: any) => { item.name = "create_thread"; },
+      (item: any) => { item.type = "agentMessage"; item.text = item.output.text; },
+      (item: any) => { item.output.text = "quoted " + item.output.text; },
+      (item: any) => { item.output.text += " unrelated suffix"; },
+      (item: any) => { item.output.text = item.output.text.replace(controllerId, "invalid-source"); },
+      (item: any) => { item.output.text = item.output.text.replace(job.prompt, "partial"); },
+    ]) {
+      const snapshot = delegated(job, answer(0)); mutation(snapshot.turns[0].items[0]);
+      expect(() => completedAnswer(job, snapshot)).toThrow();
+    }
+  });
+  test("hidden or truncated native input never authorizes send or completion", () => {
+    const job = { target: peer("codex", 0), worker: controllerId, prompt: "exact unique delivery" };
+    for (const mutation of [
+      (snapshot: any) => { delete snapshot.turns[0].items[0].output; },
+      (snapshot: any) => { snapshot.turns[0].items[0].output.truncated = true; },
+      (snapshot: any) => { snapshot.turns[0].items[0].truncated = true; },
+      (snapshot: any) => { snapshot.turns[0].truncated = true; },
+      (snapshot: any) => { snapshot.truncated = true; },
+    ]) {
+      const snapshot = delegated(job, answer(0)); mutation(snapshot);
+      expect(() => completedAnswer(job, snapshot)).toThrow();
+      expect(() => assertReady(job, snapshot)).toThrow();
+    }
+  });
+  test("duplicate native inputs in one turn or multiple turns cannot correlate a receipt", () => {
+    const job = { target: peer("codex", 0), worker: controllerId, prompt: "exact unique delivery" };
+    for (const sameTurn of [true, false]) {
+      const snapshot = delegated(job, answer(0));
+      if (sameTurn) snapshot.turns[0].items.push(structuredClone(snapshot.turns[0].items[0]));
+      else snapshot.turns.push(structuredClone(snapshot.turns[0]));
+      expect(() => completedAnswer(job, snapshot)).toThrow("duplicated");
+    }
+  });
   test("local Work uses Codex final-answer format and ignores commentary", () => {
     const job = { target: peer("work", 0), prompt: "exact delivery prompt" };
     const snapshot = native({ ...job, target: { ...job.target, kind: "codex" } }, answer(0));
@@ -161,14 +230,17 @@ describe("Native desktop adapter", () => {
       if (operation === "project-relay/complete") { service.finish(body.relay_id, body.delivery_id, body.lease, body.answer, body.receipt); return { accepted: true }; }
       throw new Error("Unexpected operation");
     };
-    const job = await bridgeRun({ operation: "claim", worker: "controller" }, send);
+    const job = await bridgeRun({ operation: "claim", worker: controllerId }, send);
     const base = { relay_id: job.relayId, delivery_id: job.deliveryId, lease: job.lease };
     const empty = { ...native(job, ""), turns: [] };
     const prepared = await bridgeRun({ operation: "prepare", ...base, snapshot: empty }, send);
     expect(prepared).toEqual({ sendOnce: true, threadId: job.target.conversation, prompt: job.prompt });
     expect(service.list()[0]!.turns[0]!.state).toBe("submitted");
     await expect(bridgeRun({ operation: "prepare", ...base, snapshot: empty }, send)).rejects.toThrow();
-    await bridgeRun({ operation: "complete", ...base, snapshot: native(job, answer(0)) }, send);
+    const completed = delegated({ ...job, worker: controllerId }, answer(0));
+    await bridgeRun({ operation: "complete", ...base, snapshot: completed }, send);
+    await bridgeRun({ operation: "complete", ...base, snapshot: completed }, send);
+    expect(service.list()[0]!.turns).toHaveLength(2);
     expect(service.list()[0]!.turns[1]!.prompt).toContain("Implementation and test evidence");
   });
 });
