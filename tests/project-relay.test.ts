@@ -96,16 +96,21 @@ describe("Existing-chat project routing", () => {
 });
 
 describe("Durability and no duplicate submissions", () => {
-  test("reconnect reconciles submitted native delivery, duplicate prepare fails and completion is idempotent", () => {
+  test("reconnect reconciles submitted native delivery but waits for explicit Resume before forwarding", () => {
     const path = join(root(), "relay.json"); let time = 1000;
     const first = new ProjectRelayService(path, { run: async () => "unused" }, () => time);
     first.start(input()); const job: any = first.claim("controller"); first.submitting(...ids(job));
     time += 999999;
     const restored = new ProjectRelayService(path, { run: async () => "unused" }, () => time);
+    expect(restored.list()[0]!.state).toBe("stopped");
     expect(restored.claim("other-controller")).toBeNull();
     expect(restored.claim("controller")).toMatchObject({ deliveryId: job.deliveryId, state: "submitted" });
     expect(() => restored.submitting(...ids(job))).toThrow();
     restored.finish(...ids(job), answer(0), "receipt"); restored.finish(...ids(job), answer(0), "receipt");
+    expect(restored.list()[0]!.state).toBe("stopped");
+    expect(restored.list()[0]!.turns).toHaveLength(1);
+    restored.resume(restored.list()[0]!.id);
+    expect(restored.list()[0]!.state).toBe("running");
     expect(restored.list()[0]!.turns).toHaveLength(2);
   });
   test("expired unsubmitted claim can move safely; stale lease cannot send", () => {
@@ -116,21 +121,24 @@ describe("Durability and no duplicate submissions", () => {
     const next: any = service.claim("replacement"); expect(next.deliveryId).toBe(old.deliveryId); expect(next.lease).not.toBe(old.lease);
     expect(() => service.submitting(...ids(old))).toThrow(); service.submitting(...ids(next));
   });
-  test("restart at browser send boundary never replays", async () => {
+  test("restart at browser send boundary stops and never replays", async () => {
     const path = join(root(), "relay.json");
     const service = new ProjectRelayService(path, { run: async () => "unused" }); service.start(input());
     const persisted = JSON.parse(readFileSync(path, "utf8")); persisted.sessions[0].peers[0] = peer("gw", 0); persisted.sessions[0].turns[0].state = "submitted"; writeFileSync(path, JSON.stringify(persisted));
     let calls = 0;
     const restored = new ProjectRelayService(path, { run: async () => { calls++; return answer(0); } }); restored.kick(); await restored.idle();
-    expect(calls).toBe(0); expect(restored.list()[0]!.state).toBe("uncertain");
+    expect(calls).toBe(0); expect(restored.list()[0]!.state).toBe("stopped");
+    expect(() => restored.resume(restored.list()[0]!.id)).toThrow("exact-response reconciliation");
   });
-  test("cancel during a submitted turn accepts its receipt without scheduling the peer", () => {
+  test("stop during a submitted turn accepts its receipt without scheduling the peer until Resume", () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
     const session = service.start(input()); const job: any = service.claim("controller"); service.submitting(...ids(job)); service.cancel(session.id);
     expect(service.claim("controller")).toMatchObject({ deliveryId: job.deliveryId, state: "submitted" });
     expect(() => service.start({ ...input(), requestId: "another" })).toThrow();
     service.finish(...ids(job), answer(0), "receipt");
-    expect(service.list()[0]!.state).toBe("cancelled"); expect(service.list()[0]!.turns).toHaveLength(1); expect(service.claim("controller")).toBeNull();
+    expect(service.list()[0]!.state).toBe("stopped"); expect(service.list()[0]!.turns).toHaveLength(1); expect(service.claim("controller")).toBeNull();
+    service.resume(session.id);
+    expect(service.list()[0]!.state).toBe("running"); expect(service.list()[0]!.turns).toHaveLength(2);
   });
   test("driver error after submission becomes uncertain without a second attempt", async () => {
     let calls = 0;
