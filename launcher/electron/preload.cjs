@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   smokeTest: () => ipcRenderer.invoke("launcher:browser-smoke"),
   verifyMcp: () => ipcRenderer.invoke("launcher:mcp-verify"),
   doctor: () => ipcRenderer.invoke("launcher:doctor"),
+  startCouncilRuntime: () => ipcRenderer.invoke("launcher:council-runtime-start"),
+  clearCache: () => ipcRenderer.invoke("launcher:clear-cache"),
   cancelTurns: () => ipcRenderer.invoke("launcher:cancel-turns"),
   setupMcp: (input) => ipcRenderer.invoke("launcher:setup-mcp", input),
   bindCurrentChatGptAsLead: (input = {}) => ipcRenderer.invoke("launcher:council-bind-current-lead", input),

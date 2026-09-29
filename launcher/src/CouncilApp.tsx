@@ -76,6 +76,9 @@ function bytes(value: number): string {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 function statusTone(status: CouncilConnectionNode["status"]): string { return `status-${status}`; }
+function connectionNeedsAttention(item: CouncilConnectionNode): boolean {
+  return item.status === "degraded" || item.status === "offline" || item.status === "blocked";
+}
 
 export function CouncilApp() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
@@ -143,7 +146,7 @@ export function CouncilApp() {
   const otherTabs = useMemo(() => (browser?.tabs ?? []).filter(tab => tab.id !== "home" && !tab.agentId), [browser]);
   const connections = useMemo(() => councilRuntime ? deriveCouncilConnections({ runtime: councilRuntime, browser, connectorObservation }) : [], [councilRuntime, browser, connectorObservation]);
   const healthyConnections = connections.filter(item => item.status === "healthy").length;
-  const nonHealthyConnections = connections.filter(item => item.status !== "healthy");
+  const nonHealthyConnections = connections.filter(connectionNeedsAttention);
   const primaryConnectionIssue = nonHealthyConnections[0];
 
   if (!api) return <div className="council-fatal">Launcher IPC is unavailable.</div>;
@@ -179,11 +182,25 @@ export function CouncilApp() {
     await api.bindCurrentChatGptAsLead({ projectName: project?.name ?? "ChatGPT Project" });
     setView("agents");
   });
+  const clearCache = () => void run(async () => {
+    if (!window.confirm("Clear local CWC cache and work history? This removes relay/job/runtime state and optional connection configuration, but keeps your ChatGPT sign-in.")) return;
+    await api.clearCache();
+    connectionDraft = { tunnelId: "", runtimeKey: "" };
+    memoryQueryDraft = "";
+    setConnectorObservation("unknown");
+    const value = await api.snapshot();
+    setSnapshot(value); setBrowser(value.browser); setCouncilRuntime(value.councilRuntime);
+    setView("overview");
+  });
+  const startLocalRuntime = () => void run(async () => {
+    const result = await api.startCouncilRuntime();
+    if (!result.ok) throw new Error("Local Council runtime did not become ready");
+  });
 
   return <main className="council-shell">
     <header className="council-titlebar">
       <div className="council-titlebar-brand"><span className="council-mark small">C</span><div><strong>CodexWeb Council</strong><small>{project?.name ?? "Mission Control"}</small></div></div>
-      <div className="council-titlebar-health"><span className={healthyConnections === connections.length && connections.length ? "system-ready" : "system-degraded"} /><strong>{!connections.length ? "Connecting systems" : nonHealthyConnections.length ? `${nonHealthyConnections.length} connection layer${nonHealthyConnections.length === 1 ? "" : "s"} need attention` : `All ${connections.length} connection layers healthy`}</strong><small>{primaryConnectionIssue ? `${primaryConnectionIssue.label} · ${primaryConnectionIssue.detail}` : autonomy?.dispatcher.activeWorkItemId ? "Autonomy executing" : "Operator ready"}</small></div>
+      <div className="council-titlebar-health"><span className={healthyConnections === connections.length && connections.length ? "system-ready" : "system-degraded"} /><strong>{!connections.length ? "Connecting systems" : nonHealthyConnections.length ? `${nonHealthyConnections.length} connection layer${nonHealthyConnections.length === 1 ? "" : "s"} need attention` : "Core systems ready"}</strong><small>{primaryConnectionIssue ? `${primaryConnectionIssue.label} · ${primaryConnectionIssue.detail}` : autonomy?.dispatcher.activeWorkItemId ? "Autonomy executing" : "Optional connection layers can stay off"}</small></div>
       <div className="council-window-controls no-drag"><button aria-label="Minimize" onClick={() => api.windowControl("minimize")}>—</button><button aria-label="Maximize" onClick={() => api.windowControl("zoom")}>□</button><button className="close" aria-label="Close" onClick={() => api.windowControl("close")}>×</button></div>
     </header>
 
@@ -194,14 +211,14 @@ export function CouncilApp() {
     </aside>
 
     <section className="council-workspace">
-      {view === "overview" ? <Overview project={project} agents={agents} autonomy={autonomy} connections={connections} healthByAgent={healthByAgent} executionByAgent={latestExecutionByAgent} onOpenAgent={openAgent} onNavigate={setView} /> : null}
+      {view === "overview" ? <Overview project={project} agents={agents} autonomy={autonomy} connections={connections} healthByAgent={healthByAgent} executionByAgent={latestExecutionByAgent} onOpenAgent={openAgent} onNavigate={setView} busy={busy} onClearCache={clearCache} /> : null}
       {view === "chatgpt" ? <ChatWorkspace browser={browser} agents={agents} autonomy={autonomy} healthByAgent={healthByAgent} tabByAgent={tabByAgent} otherTabs={otherTabs} busy={busy} authenticated={authenticated} projectBound={Boolean(project)} run={run} onBindLead={bindCurrentLead} onOpenAgent={openAgent} setSlot={setSlot} /> : null}
       {view === "agents" ? <AgentsWorkspace agents={agents} healthByAgent={healthByAgent} executionByAgent={latestExecutionByAgent} tabByAgent={tabByAgent} onOpenAgent={openAgent} /> : null}
       {view === "work" ? <WorkWorkspace runtime={councilRuntime} roomId={roomId} autonomy={autonomy} agents={agents} /> : null}
       {view === "executions" ? <ExecutionInspector runs={executionState.runs} loading={executionState.loading} loadError={executionState.error} refreshRuns={executionState.refresh} /> : null}
       {view === "memory" ? <MemoryPanel roomId={roomId} /> : null}
       {view === "relay" ? <ProjectRelayPanel /> : null}
-      {view === "connections" ? <ConnectionsWorkspace connections={connections} snapshot={snapshot} busy={busy} onVerify={verifyConnections} onOpenConnectorSetup={() => void run(() => api.openExternal(snapshot.urls.connectors))} /> : null}
+      {view === "connections" ? <ConnectionsWorkspace connections={connections} snapshot={snapshot} busy={busy} onVerify={verifyConnections} onStartRuntime={startLocalRuntime} onOpenConnectorSetup={() => void run(() => api.openExternal(snapshot.urls.connectors))} /> : null}
       {view === "diagnostics" ? <DiagnosticsWorkspace connections={connections} logs={logs} busy={busy} onVerify={verifyConnections} onDoctor={() => void run(async () => { const report = await api.doctor(); if (!report.ok) throw new Error(report.checks.filter(check => check.status !== "ok").map(check => check.message).join(" · ")); })} /> : null}
       {view === "settings" ? <Settings snapshot={snapshot} busy={busy} run={run} /> : null}
     </section>
@@ -215,12 +232,12 @@ function PageHeader({ eyebrow, title, body, actions }: { eyebrow: string; title:
   return <header className="mission-page-header"><div><span className="page-context">{eyebrow}</span><h2>{title}</h2><p>{body}</p></div>{actions ? <div className="page-actions">{actions}</div> : null}</header>;
 }
 
-function Overview({ project, agents, autonomy, connections, healthByAgent, executionByAgent, onOpenAgent, onNavigate }: { project: ReturnType<typeof managedProject>; agents: ManagedAgentView[]; autonomy: CouncilAutonomyStatusView | null; connections: CouncilConnectionNode[]; healthByAgent: Map<string, CouncilAutonomyStatusView["health"][number]>; executionByAgent: Map<string, CouncilExecutionRunView>; onOpenAgent: (agent: ManagedAgentView) => void; onNavigate: (view: View) => void }) {
+function Overview({ project, agents, autonomy, connections, healthByAgent, executionByAgent, onOpenAgent, onNavigate, busy, onClearCache }: { project: ReturnType<typeof managedProject>; agents: ManagedAgentView[]; autonomy: CouncilAutonomyStatusView | null; connections: CouncilConnectionNode[]; healthByAgent: Map<string, CouncilAutonomyStatusView["health"][number]>; executionByAgent: Map<string, CouncilExecutionRunView>; onOpenAgent: (agent: ManagedAgentView) => void; onNavigate: (view: View) => void; busy: boolean; onClearCache: () => void }) {
   const executionAttention = [...executionByAgent.values()].filter(run => run.status === "uncertain" || run.status === "failed" || run.status === "waiting-user").length;
-  const attention = connections.filter(item => item.status !== "healthy").length + (autonomy?.breakerOpenCount ?? 0) + (autonomy?.dispatcher.uncertain ?? 0) + executionAttention;
+  const attention = connections.filter(connectionNeedsAttention).length + (autonomy?.breakerOpenCount ?? 0) + (autonomy?.dispatcher.uncertain ?? 0) + executionAttention;
   const active = agents.filter(agent => agent.runtimeStatus === "active" || agent.runtimeStatus === "queued").length;
-  return <div className="mission-page"><PageHeader eyebrow="Mission control" title={project?.name ?? "Council overview"} body={project?.mission ?? "Start with a persistent Project conversation, then let Council keep durable team state separate from browser surfaces."} actions={<button className="primary" onClick={() => onNavigate("chatgpt")}>Open ChatGPT workspace</button>} />
-    <section className="mission-kpis"><article><span>TEAM</span><strong>{agents.length}</strong><small>{active} active or queued</small></article><article><span>DURABLE WORK</span><strong>{autonomy?.queue.totalActive ?? 0}</strong><small>{autonomy?.dispatcher.activeWorkItemId ? "one browser operation executing" : "scheduler idle"}</small></article><article><span>NEEDS ATTENTION</span><strong className={attention ? "warn" : "good"}>{attention}</strong><small>{autonomy?.dispatcher.uncertain ?? 0} uncertain · {autonomy?.breakerOpenCount ?? 0} breakers · {executionAttention} executions</small></article><article><span>SYSTEMS</span><strong>{connections.filter(item => item.status === "healthy").length}/{connections.length}</strong><small>independently observed layers</small></article></section>
+  return <div className="mission-page"><PageHeader eyebrow="Mission control" title={project?.name ?? "Council overview"} body={project?.mission ?? "Start with a persistent Project conversation, then let Council keep durable team state separate from browser surfaces."} actions={<><button className="primary" onClick={() => onNavigate("chatgpt")}>Open ChatGPT workspace</button><button disabled={busy} onClick={onClearCache}>Clear cache</button></>} />
+    <section className="mission-kpis"><article><span>TEAM</span><strong>{agents.length}</strong><small>{active} active or queued</small></article><article><span>DURABLE WORK</span><strong>{autonomy?.queue.totalActive ?? 0}</strong><small>{autonomy?.dispatcher.activeWorkItemId ? "one browser operation executing" : "scheduler idle"}</small></article><article><span>NEEDS ATTENTION</span><strong className={attention ? "warn" : "good"}>{attention}</strong><small>{autonomy?.dispatcher.uncertain ?? 0} uncertain · {autonomy?.breakerOpenCount ?? 0} breakers · {executionAttention} executions</small></article><article><span>SYSTEMS</span><strong>{connections.filter(item => item.status === "healthy").length}/{connections.length}</strong><small>optional Off layers do not need attention</small></article></section>
     <div className="overview-grid"><section className="mission-section"><div className="section-heading"><div><span className="eyebrow">TEAM NOW</span><h3>Managed agents</h3></div><button onClick={() => onNavigate("agents")}>View all</button></div><div className="agent-list-compact">{agents.length ? agents.slice(0,6).map(agent => { const health = healthByAgent.get(agent.id); const execution = executionByAgent.get(agent.id); return <button key={agent.id} onClick={() => onOpenAgent(agent)}><i className={`agent-dot runtime-${agent.runtimeStatus}`} /><div><strong>{agent.name}</strong><small>{agent.role}</small></div><em className={`health-${health?.state ?? agent.runtimeStatus}`}>{compactHealth(health?.state ?? agent.runtimeStatus)}</em><ExecutionBadge run={execution} compact /></button>; }) : <EmptyLine text="No managed agents yet" />}</div></section>
       <section className="mission-section"><div className="section-heading"><div><span className="eyebrow">CONNECTION TRUTH</span><h3>System layers</h3></div><button onClick={() => onNavigate("connections")}>Inspect</button></div><ConnectionList connections={connections} compact /></section></div>
   </div>;
@@ -269,7 +286,7 @@ function ManagerControl({ agents }: { agents: ManagedAgentView[] }) {
   </section>;
 }
 
-function ConnectionsWorkspace({ connections, snapshot, busy, onVerify, onOpenConnectorSetup }: { connections: CouncilConnectionNode[]; snapshot: LauncherSnapshot; busy: boolean; onVerify: () => void; onOpenConnectorSetup: () => void }) {
+function ConnectionsWorkspace({ connections, snapshot, busy, onVerify, onStartRuntime, onOpenConnectorSetup }: { connections: CouncilConnectionNode[]; snapshot: LauncherSnapshot; busy: boolean; onVerify: () => void; onStartRuntime: () => void; onOpenConnectorSetup: () => void }) {
   const [tunnelId, setTunnelIdState] = useState(() => connectionDraft.tunnelId);
   const [runtimeKey, setRuntimeKeyState] = useState(() => connectionDraft.runtimeKey);
   const [setupBusy, setSetupBusy] = useState(false);
@@ -291,15 +308,16 @@ function ConnectionsWorkspace({ connections, snapshot, busy, onVerify, onOpenCon
     } catch (error) { setSetupMessage(messageOf(error)); } finally { setSetupBusy(false); }
   };
   const canConnect = snapshot.mcpCredentialsConfigured || (/^tunnel_[a-f0-9]{32}$/i.test(tunnelId.trim()) && runtimeKey.trim().length >= 20);
-  return <div className="mission-page"><PageHeader eyebrow="Connection graph" title="Connections" body="Tunnel, MCP, connector, Playwright and ChatGPT are independent layers. One green layer never implies the next one is healthy." actions={<><button disabled={busy} onClick={onVerify}>Verify MCP + connector</button><button className="primary" disabled={busy} onClick={onOpenConnectorSetup}>Open ChatGPT connector setup</button></>} /><ConnectionList connections={connections} />
+  return <div className="mission-page"><PageHeader eyebrow="Connection graph" title="Connections" body="Council runtime, Playwright and the ChatGPT session start with CWC. Secure Tunnel, MCP and the ChatGPT connector are optional and may stay Off." actions={<><button disabled={busy} onClick={onStartRuntime}>Start / repair local runtime</button><button disabled={busy} onClick={onVerify}>Verify MCP + connector</button><button className="primary" disabled={busy} onClick={onOpenConnectorSetup}>Open ChatGPT connector setup</button></>} /><ConnectionList connections={connections} />
     <div className="connection-setup-grid">
-      <section className="connection-setup-pane"><div className="connection-setup-heading"><div><span className="connection-setup-label">Secure tunnel</span><h3>Connect secure tunnel</h3></div><em className={snapshot.mcpCredentialsConfigured ? "good" : "muted"}>{snapshot.mcpCredentialsConfigured ? "credentials saved" : "not configured"}</em></div><p>The Tunnel starts the local Council MCP runtime. It is not the same thing as ChatGPT seeing the connector.</p>
+      <section className="connection-setup-pane"><div className="connection-setup-heading"><div><span className="connection-setup-label">Council runtime</span><h3>Local runtime</h3></div></div><p>The local browser-only Council runtime starts automatically with CWC. No Tunnel ID, API key, terminal command, or backend setup is required.</p><div className="connection-actions"><button className="primary" disabled={busy} onClick={onStartRuntime}>Start / repair local runtime</button></div></section>
+      <section className="connection-setup-pane"><div className="connection-setup-heading"><div><span className="connection-setup-label">Secure tunnel</span><h3>Connect secure tunnel</h3></div><em className={snapshot.mcpCredentialsConfigured ? "good" : "muted"}>{snapshot.mcpCredentialsConfigured ? "credentials saved" : "optional · off"}</em></div><p>The Tunnel starts the optional Council MCP path. It is not required for normal GPT Web Project Relay work.</p>
         {!snapshot.mcpCredentialsConfigured ? <div className="connection-fields"><label><span>Tunnel ID</span><input value={tunnelId} onChange={event => setTunnelId(event.target.value)} placeholder="tunnel_…" autoComplete="off" spellCheck={false} /></label><label><span>Tunnels Read + Use key</span><input type="password" value={runtimeKey} onChange={event => setRuntimeKey(event.target.value)} placeholder="Paste runtime key" autoComplete="off" /></label></div> : null}
         <div className="connection-actions"><button className="primary" disabled={setupBusy || !canConnect} onClick={() => void connect()}>{setupBusy ? "Connecting…" : snapshot.mcpCredentialsConfigured ? "Reconnect saved tunnel" : "Connect secure tunnel"}</button><button disabled={setupBusy} onClick={() => void api!.openExternal(snapshot.urls.tunnels)}>Open Tunnel settings</button><button disabled={setupBusy || (!tunnelId && !runtimeKey)} onClick={clearInputs}>CLEAR</button></div>{setupMessage ? <p className="connection-setup-message">{setupMessage}</p> : null}
       </section>
       <section className="connection-setup-pane"><div className="connection-setup-heading"><div><span className="connection-setup-label">ChatGPT capability</span><h3>Optional MCP connector</h3></div></div><p>Create the exact <code>CodexWeb Council</code> connector on the same Tunnel when your ChatGPT workspace supports it. Managed browser turns remain usable without this connector.</p><div className="connection-actions"><button onClick={onOpenConnectorSetup}>Open connector settings</button><button disabled={busy} onClick={onVerify}>Verify current session</button></div></section>
     </div>
-    <section className="mission-note"><strong>Browser-only Council remains available when the connector is missing.</strong><p>The connector enhances managed turns with MCP tools, but normal AI-to-AI action-footer turns no longer depend on it.</p><small>{snapshot.mcpCredentialsConfigured ? "Tunnel credentials are saved locally." : "Tunnel credentials are not configured."}</small></section>
+    <section className="mission-note"><strong>Browser-only Council is the default.</strong><p>Council runtime, Playwright surfaces and your ChatGPT session start automatically. Tunnel/MCP/connector capability is optional and only starts when you configure it here.</p><small>{snapshot.mcpCredentialsConfigured ? "Tunnel credentials are saved locally." : "Tunnel credentials are not configured."}</small></section>
   </div>;
 }
 

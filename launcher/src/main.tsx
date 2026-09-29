@@ -9,6 +9,7 @@ import "./council-4-shell-foundation.css";
 import "./council-4-workspaces.css";
 import "./council-4-detail.css";
 import "./council-4-responsive.css";
+import "./cwc-usability.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

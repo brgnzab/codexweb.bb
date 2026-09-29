@@ -14,16 +14,20 @@ function capabilityReady() {
 
 function deriveCouncilCapabilities(input = {}) {
   const configured = input.configured === true;
+  const mode = input.mode === "full" ? "full" : input.mode === "browser-only" ? "browser-only" : null;
   // Explicit positive evidence is accepted for focused tests/callers, but persisted false values
   // never override the live main-process evidence owned by RuntimeSupervisor.
   const runtimeLive = input.runtimeLive === true || isCouncilRuntimeLive();
   const runtimeCapability = runtimeLive ? capabilityReady() : capabilityUnavailable(configured);
+  const optionalMcpCapability = mode === "full"
+    ? runtimeCapability
+    : capabilityUnavailable(false);
 
   return {
-    secureTunnel: { ...runtimeCapability },
+    secureTunnel: { ...optionalMcpCapability },
     localRepo: capabilityUnavailable(false),
     githubConnector: capabilityUnavailable(false),
-    fullMcp: { ...runtimeCapability },
+    fullMcp: { ...optionalMcpCapability },
     wakeEngine: { ...runtimeCapability },
   };
 }

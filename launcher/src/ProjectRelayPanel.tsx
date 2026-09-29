@@ -8,7 +8,7 @@ export type ProjectRelayView = ProjectRelayInput & { id: string; state: string; 
 export type ProjectRelaySnapshot = { relays: ProjectRelayView[]; bridge: { connected: boolean; lastSeen?: string; error?: string } };
 const api = window.codexWebLauncher!;
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
-const blankDraft = (): ProjectRelayDraft => ({ name: "", task: "", peers: [{ name: "Worker", kind: "gw", conversation: "" }, { name: "Reviewer", kind: "codex", conversation: "" }], maxTurns: 20 });
+const blankDraft = (): ProjectRelayDraft => ({ name: "", task: "", peers: [{ name: "First participant", kind: "gw", conversation: "" }, { name: "Second participant", kind: "codex", conversation: "" }], maxTurns: 20 });
 const copyDraft = (draft: ProjectRelayDraft): ProjectRelayDraft => ({ ...draft, peers: draft.peers.map(peer => ({ ...peer })) as [Peer, Peer] });
 let savedDraft = blankDraft();
 const unresolvedRelay = (relay: ProjectRelayView) => relay.state === "running" || relay.state === "blocked" || relay.state === "uncertain";
@@ -78,13 +78,13 @@ export function ProjectRelayPanel() {
     finally { setBusy(false); }
   };
   return <section className="project-relay">
-    <header><h2>Work between your existing chats</h2><p>Choose a worker and reviewer, give them the task, and let CWC carry their answers back and forth until a blocker or UAT-ready result.</p></header>
+    <header><h2>Work between your existing chats</h2><p>Choose two participants, give them the task, and let CWC carry their answers back and forth until a blocker or UAT-ready result.</p></header>
     <p role="status">Desktop bridge: <strong>{snapshot.bridge.connected ? "Connected" : "Not connected"}</strong>{!snapshot.bridge.connected && " — GPT Web pairs can run now. Codex/Work deliveries wait for the CWC controller."}</p>
     {(error || loadError || snapshot.bridge.error) && <p role="alert" className="relay-error">{error || loadError || snapshot.bridge.error}</p>}
     <form onSubmit={event => { event.preventDefault(); void start(); }}>
       <fieldset disabled={busy || Boolean(pending.current)}><legend>New project</legend>
         <label>Project name<input required maxLength={160} value={draft.name} onChange={event => updateDraft(current => ({ ...current, name: event.target.value }))} /></label>
-        <div className="relay-peers">{draft.peers.map((peer, index) => <fieldset key={index}><legend>{index === 0 ? "1. Worker" : "2. Reviewer"}</legend>
+        <div className="relay-peers">{draft.peers.map((peer, index) => <fieldset key={index}><legend>{index === 0 ? "1. First participant" : "2. Second participant"}</legend>
           <label>Chat name<input required maxLength={100} value={peer.name} onChange={event => updatePeer(index, { name: event.target.value })} /></label>
           <label>Chat type<select value={peer.kind} onChange={event => updatePeer(index, { kind: event.target.value as Peer["kind"], conversation: "" })}><option value="gw">GPT Web</option><option value="codex">Codex</option><option value="work">Work</option></select></label>
           <label>{peer.kind === "gw" ? "Existing conversation URL" : "Existing desktop chat ID or codex://threads/ link"}<input required value={peer.conversation} onChange={event => updatePeer(index, { conversation: event.target.value })} placeholder={peer.kind === "gw" ? "https://chatgpt.com/c/…" : "Chat ID"} /></label>

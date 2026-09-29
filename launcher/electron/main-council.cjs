@@ -38,6 +38,7 @@ const {
   deleteObservation,
   focusAgentConversation,
   focusExecutionAgent,
+  isRuntimeUnavailable,
   listExceptionalWork,
   listExecutionRuns,
   listObservations,
@@ -62,6 +63,13 @@ const { RuntimeHost, COUNCIL_CONNECTOR_NAME } = require("./runtime.cjs");
 const { ensurePackagedRuntime } = require("./runtime-install.cjs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { createStateStore, nextSessionRefreshReminderAt, validateSidebarState } = require("./state.cjs");
+const {
+  clearCouncilCoreHome,
+  prepareFreshBuild,
+  readBuildMarker,
+  resetRuntimeFlags,
+  resolveBuildId,
+} = require("./fresh-state.cjs");
 const { MIN_WINDOW_BOUNDS, readWindowState, trackWindowState } = require("./window-state.cjs");
 
 const BrowserHost = createCouncilBrowserHostClass(browserHostModule.BrowserHost);
@@ -85,13 +93,14 @@ const APP_ICON_PATH = path.join(__dirname, "..", "assets", "icon.png");
 
 app.setName("CodexWeb Council");
 if (process.platform === "win32") app.setAppUserModelId("dev.codexwebgpt.launcher");
-// Keep the old data directory only for seamless ChatGPT login continuity. Council never
-// reads or mutates CODEX_HOME / ~/.codex from this launcher.
+// Keep the Electron browser profile for seamless ChatGPT login continuity. CWC work/runtime state
+// is build-scoped separately so a newly downloaded/head build starts clean without logging out.
 const configuredUserData = process.env.CODEX_WEB_GPT_LAUNCHER_DATA_DIR?.trim();
 const launcherUserData = configuredUserData ? path.resolve(configuredUserData) : path.join(app.getPath("appData"), "Codex Web GPT");
 fs.mkdirSync(launcherUserData, { recursive: true, mode: 0o700 });
 if (process.platform !== "win32") fs.chmodSync(launcherUserData, 0o700);
 app.setPath("userData", launcherUserData);
+const BUILD_MARKER_PATH = path.join(launcherUserData, "cwc-build.json");
 installProcessDiagnosticGuards({ filePath: path.join(launcherUserData, "logs", "process-stream-errors.log") });
 
 let mainWindow = null;
@@ -206,10 +215,9 @@ function validateBounds(value) {
 function smokePassedForCurrentVersion(state) { return state.browserSmokePassed === true && state.browserSmokeVersion === app.getVersion(); }
 function councilCapabilities(stateStore) {
   const state = stateStore.read();
-  const configured = state.mcpRuntimeInstalled === true || state.mcpSetupComplete === true;
-  // Configuration flags prove only setup history, never current liveness. Until the launcher has
-  // explicit live health evidence, fail closed instead of advertising stale capabilities as ready.
-  return deriveCouncilCapabilities({ configured, runtimeLive: false });
+  const current = runtimeHost?.runtimeConfigSnapshot?.();
+  const configured = current?.configured === true || state.mcpRuntimeInstalled === true || state.mcpSetupComplete === true;
+  return deriveCouncilCapabilities({ configured, mode: current?.mode, runtimeLive: false });
 }
 function councilRuntimeSnapshot() {
   return councilConnectionSupervisor?.snapshot() ?? {
@@ -222,6 +230,58 @@ function councilRuntimeSnapshot() {
 function safeCouncilId(value, label) {
   if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)) throw new Error(`${label} is invalid`);
   return value;
+}
+
+function applyRuntimeState(stateStore, runtime) {
+  let state;
+  if (runtime.status === "ready") state = stateStore.update({ mcpRuntimeInstalled: true });
+  else if (runtime.status === "not-configured") state = stateStore.update({ mcpRuntimeInstalled: false, mcpSetupComplete: false });
+  else return runtime;
+  send("launcher:state-changed", state);
+  return runtime;
+}
+
+async function bootstrapCouncilRuntime({ stateStore, logger, forceLocal = false } = {}) {
+  const setup = forceLocal
+    ? await runtimeHost.setupCouncilLocal()
+    : await runtimeHost.upgradeManagedRuntime();
+  if (setup?.updated) logger.info("council.runtime_upgraded", { fromVersion: setup.fromVersion, toVersion: setup.toVersion });
+  const runtime = await runtimeSupervisor.startIfConfigured();
+  applyRuntimeState(stateStore, runtime);
+  if (runtime.status !== "ready" && runtime.status !== "needs-setup") {
+    publishOperation({ name: "runtime-start", status: "failed", message: runtime.detail || `Council runtime is ${runtime.status}` });
+  }
+  return { runtime, stdout: setup?.stdout };
+}
+
+async function clearApplicationCache({ stateStore, logger }) {
+  const active = runtimeHost?.currentOperation() || browserHost?.currentOperation() || (browserHost?.activeTraceId ? "active ChatGPT turn" : null);
+  if (active) throw new Error(`Wait for ${active} to finish before clearing CWC cache`);
+  let relaySnapshot = { relays: [] };
+  try {
+    relaySnapshot = await listProjectRelays();
+  } catch (error) {
+    if (!isRuntimeUnavailable(error)) throw error;
+  }
+  const relays = Array.isArray(relaySnapshot?.relays) ? relaySnapshot.relays : [];
+  const unsafe = relays.find(relay => relay.state === "running" || relay.turns?.some(turn => turn.state === "claimed" || turn.state === "submitted"));
+  if (unsafe) throw new Error("Stop active relay work and reconcile any submitted delivery before clearing CWC cache");
+
+  publishOperation({ name: "clear-cache", status: "running", message: "Clearing local CWC work state and browser cache" });
+  await councilConnectionSupervisor?.stop();
+  await runtimeSupervisor?.shutdown();
+  clearCouncilCoreHome(CORE_HOME);
+  const state = resetRuntimeFlags(stateStore);
+  send("launcher:state-changed", state);
+  await browserHost.clearCachePreservingSession();
+  try {
+    await bootstrapCouncilRuntime({ stateStore, logger });
+  } finally {
+    councilConnectionSupervisor?.start();
+  }
+  await browserHost.refreshAuthentication();
+  publishOperation({ name: "clear-cache", status: "completed", message: "CWC cache cleared; ChatGPT sign-in was preserved" });
+  return { ok: true };
 }
 
 function registerIpc({ logger, stateStore }) {
@@ -251,6 +311,11 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:browser-logout", async () => { const browser = await browserHost.logout(); const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() }); send("launcher:state-changed", state); return { browser, state }; });
   handle("launcher:session-reminder-dismiss", () => { const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() }); send("launcher:state-changed", state); return state; });
   handle("launcher:browser-smoke", async () => { const result = await browserHost.smokeTest(); smokePassedThisSession = true; stateStore.update({ browserSmokePassed: true, browserSmokeVersion: app.getVersion() }); return result; });
+  handle("launcher:council-runtime-start", async () => {
+    const result = await bootstrapCouncilRuntime({ stateStore, logger, forceLocal: true });
+    return { ok: result.runtime.status === "ready", stdout: result.stdout };
+  });
+  handle("launcher:clear-cache", () => clearApplicationCache({ stateStore, logger }));
   handle("launcher:setup-mcp", async (_event, input = {}) => {
     const replace = input.replace === true;
     let tunnelClientPath = "";
@@ -379,16 +444,26 @@ async function start() {
   browserControl = await new BrowserControlServer({ logger, getBrowserHost: () => browserHost, getPreferences: () => stateStore.read() }).start();
   runtimeSupervisor = new RuntimeSupervisor({ app, logger, sourceRoot: SOURCE_ROOT, installedRuntimeRoot, runtimeRootProvider, coreHome: CORE_HOME, browserDescriptorPath: BROWSER_DESCRIPTOR_PATH, publishOperation });
   runtimeHost = new RuntimeHost({ app, logger, sourceRoot: SOURCE_ROOT, installedRuntimeRoot, runtimeRootProvider, browserDescriptorPath: BROWSER_DESCRIPTOR_PATH, publishOperation, supervisor: runtimeSupervisor });
+
+  const buildId = resolveBuildId({ app, resourcesPath: process.resourcesPath });
+  const previousBuild = readBuildMarker(BUILD_MARKER_PATH);
+  const freshBuild = previousBuild?.buildId !== buildId;
+  if (freshBuild) {
+    try { await runtimeSupervisor.shutdown(); } catch (error) { logger.warn("council.fresh_build_shutdown_failed", { message: error instanceof Error ? error.message : String(error) }); }
+    const prepared = prepareFreshBuild({ markerPath: BUILD_MARKER_PATH, buildId, coreHome: CORE_HOME, stateStore });
+    if (prepared.reset) logger.info("council.fresh_build_state_reset", { previousBuildId: prepared.previousBuildId, buildId });
+  }
+
   councilConnectionSupervisor = new CouncilConnectionSupervisor({ logger, capabilities: () => councilCapabilities(stateStore), publish: state => send("launcher:council-runtime", state) });
   browserHost = new BrowserHost({ window: mainWindow, descriptorPath: BROWSER_DESCRIPTOR_PATH, cdpPort, control: browserControl.descriptor(), getConnectorName: () => COUNCIL_CONNECTOR_NAME, helper: { executable: process.execPath, script: BROWSER_HELPER_PATH }, logger, publishState: state => send("launcher:browser-state", state) });
   await browserHost.ready();
+  if (freshBuild) await browserHost.clearCachePreservingSession();
+  await browserHost.refreshAuthentication().catch(error => logger.warn("browser.session_refresh_failed", { message: error instanceof Error ? error.message : String(error) }));
   registerIpc({ logger, stateStore });
-  councilConnectionSupervisor.start();
-  const trayAvailable = createTray(logger); if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", showMainWindow);
 
   const smoke = process.argv.includes("--launcher-smoke-test");
-  await loadRenderer(mainWindow);
   if (smoke) {
+    await loadRenderer(mainWindow);
     const smokeRuntimeRoot = runtimeRootProvider();
     if (app.isPackaged && !smokeRuntimeRoot) throw new Error("Packaged Council smoke test could not install its durable runtime");
     const invocation = runtimeSupervisor.runtimeCommand(["--version"]);
@@ -399,22 +474,19 @@ async function start() {
     if (!markerPath || !path.isAbsolute(markerPath)) throw new Error("Packaged Council smoke test requires an absolute CODEX_WEB_GPT_SMOKE_FILE");
     fs.mkdirSync(path.dirname(markerPath), { recursive: true });
     fs.writeFileSync(markerPath, `${JSON.stringify({ ok: true, product: "codexweb-council", version: app.getVersion(), platform: process.platform, packaged: app.isPackaged, runtimeVerified: true })}\n`);
-    await councilConnectionSupervisor.stop(); browserHost.destroy(); await browserControl.close(); mainWindow.destroy(); app.quit(); return;
+    browserHost.destroy(); await browserControl.close(); mainWindow.destroy(); app.quit(); return;
   }
 
-  void browserHost.refreshAuthentication().catch(error => logger.warn("browser.session_refresh_failed", { message: error instanceof Error ? error.message : String(error) }));
-  void (async () => {
-    const upgrade = await runtimeHost.upgradeManagedRuntime();
-    if (upgrade.updated) logger.info("council.runtime_upgraded", { fromVersion: upgrade.fromVersion, toVersion: upgrade.toVersion });
-    const runtime = await runtimeSupervisor.startIfConfigured();
-    if (runtime.status === "ready") {
-      const state = stateStore.update({ mcpRuntimeInstalled: true }); send("launcher:state-changed", state);
-    } else if (runtime.status === "not-configured") {
-      const state = stateStore.update({ mcpRuntimeInstalled: false, mcpSetupComplete: false }); send("launcher:state-changed", state);
-    } else if (runtime.status !== "needs-setup") {
-      publishOperation({ name: "runtime-start", status: "failed", message: runtime.detail || `Council runtime is ${runtime.status}` });
-    }
-  })().catch(error => { const message = error instanceof Error ? error.message : String(error); logger.error("council.runtime_start_failed", { message }); publishOperation({ name: "runtime-start", status: "failed", message }); });
+  try {
+    await bootstrapCouncilRuntime({ stateStore, logger });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error("council.runtime_start_failed", { message });
+    publishOperation({ name: "runtime-start", status: "failed", message });
+  }
+  councilConnectionSupervisor.start();
+  const trayAvailable = createTray(logger); if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", showMainWindow);
+  await loadRenderer(mainWindow);
 
   app.on("activate", showMainWindow);
   app.on("before-quit", event => { if (exitCommitted) return; event.preventDefault(); void requestQuit(); });

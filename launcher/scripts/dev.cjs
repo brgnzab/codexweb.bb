@@ -2,13 +2,22 @@ const { spawn, spawnSync } = require("node:child_process");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
+const repoRoot = path.resolve(root, "..");
 const vitePackage = require.resolve("vite/package.json", { paths: [root] });
 const viteBin = path.join(path.dirname(vitePackage), "bin", "vite.js");
 const electronBin = require("electron");
 const bun = process.env.CODEX_WEB_GPT_BUN || process.execPath;
 
+const gitHead = spawnSync("git", ["rev-parse", "HEAD"], {
+  cwd: repoRoot,
+  encoding: "utf8",
+  windowsHide: true,
+});
+const sourceBuildId = process.env.CWC_BUILD_ID
+  || (gitHead.status === 0 && /^[a-f0-9]{40}$/i.test(gitHead.stdout.trim()) ? gitHead.stdout.trim().toLowerCase() : "dev-unversioned");
+
 const helperBuild = spawnSync(bun, ["run", "scripts/build-browser-helper.ts"], {
-  cwd: path.resolve(root, ".."),
+  cwd: repoRoot,
   env: process.env,
   stdio: "inherit",
 });
@@ -52,6 +61,7 @@ void waitForVite().then(() => {
       VITE_DEV_SERVER_URL: "http://127.0.0.1:4178",
       CODEX_WEB_GPT_BUN: bun,
       CODEX_CHATGPT_WEB_BUN: bun,
+      CWC_BUILD_ID: sourceBuildId,
     },
   });
   electron.once("exit", (code) => {

@@ -127,6 +127,16 @@ function createCouncilBrowserHostClass(LegacyBrowserHost) {
       return super.removeTurnTab(tab, abortRunning);
     }
 
+    async clearCachePreservingSession() {
+      await this.ready();
+      const session = this.view?.webContents?.session;
+      if (!session) throw new Error("ChatGPT browser session is unavailable");
+      await session.clearCache();
+      this.writeDescriptor?.();
+      this.logger?.info?.("browser.cache_cleared", { sessionPreserved: true });
+      return this.snapshot();
+    }
+
     async dispose(...args) {
       if (this.downloadSession && this.downloadBlocker) this.downloadSession.removeListener?.("will-download", this.downloadBlocker);
       this.downloadSession = null;

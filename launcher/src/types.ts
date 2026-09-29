@@ -442,6 +442,8 @@ export interface LauncherApi {
   smokeTest(): Promise<{ ok: boolean; effort: string; response: string }>;
   verifyMcp(): Promise<DoctorReport>;
   doctor(): Promise<DoctorReport>;
+  startCouncilRuntime(): Promise<{ ok: boolean; stdout?: string }>;
+  clearCache(): Promise<{ ok: true }>;
   cancelTurns(): Promise<{ stdout: string }>;
   setBridgeEnabled(enabled: boolean): Promise<LauncherState>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
