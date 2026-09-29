@@ -78,11 +78,11 @@ export async function runCouncilMcpMain(args: string[]): Promise<void> {
       const transport = new CouncilBrowserTransport(control, new NodePlaywrightCouncilChatDriver(config.browserHostDescriptorPath), { execution, beforeTurn: input => projectRelay?.assertBrowserAccess(input.conversationUrl, input.agentId) });
       managedState = new ManagedAgentStateStore(join(councilDir, "managed-agents.json"));
       projectRelay = new ProjectRelayService(join(councilDir, "project-relays.json"), {
-        run: async (peer, prompt, deliveryId) => {
+        run: async (peer, prompt, deliveryId, onPhase) => {
           if (managedState!.list().some(agent => agent.conversationUrl === peer.conversation && managedRuntime?.managedStatus(agent.id) === "active")) throw new Error("This chat still has an active Council turn. Let it finish before starting the project relay.");
           const agentId = `relay-${deliveryId}`;
           try {
-            const result = await transport.run({ agentId, conversationUrl: peer.conversation, prompt });
+            const result = await transport.run({ agentId, conversationUrl: peer.conversation, prompt, onPhase });
             if (result.conversationUrl !== peer.conversation) throw new Error("Project relay conversation changed unexpectedly");
             return result.answer;
           } finally { await transport.release(agentId).catch(() => false); }

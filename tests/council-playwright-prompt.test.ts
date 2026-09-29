@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { councilPromptEquivalentPrefixLength, councilPromptTextEquivalent } from "../src/council/playwright-council-driver";
 
 describe("Council ChatGPT prompt preservation", () => {
@@ -22,5 +24,14 @@ describe("Council ChatGPT prompt preservation", () => {
     expect(councilPromptTextEquivalent("a\nb", "a b")).toBeFalse();
     expect(councilPromptTextEquivalent("a\tb", "a b")).toBeFalse();
     expect(councilPromptTextEquivalent("a\u00A0b", "a b")).toBeFalse();
+  });
+
+  test("long prompt insertion re-acquires the live composer, restores the caret and verifies every chunk before continuing", () => {
+    const source = readFileSync(join(import.meta.dir, "..", "src", "council", "playwright-council-driver.ts"), "utf8");
+    expect(source).toContain("const INSERT_CHUNK_CHARS = 4_000");
+    expect(source).toContain("composer = await visibleComposer(page)");
+    expect(source).toContain("await moveComposerCaretToEnd(composer)");
+    expect(source).toContain("const observedSoFar = await waitForComposerText(composer, expectedSoFar, signal)");
+    expect(source).toContain("if (!councilPromptTextEquivalent(expectedSoFar, observedSoFar))");
   });
 });

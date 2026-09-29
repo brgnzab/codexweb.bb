@@ -6,6 +6,7 @@ export type CouncilFailureCode =
   | "CHATGPT_SIGNED_OUT"
   | "CONNECTION_FAILED"
   | "RESPONSE_STALLED"
+  | "PROMPT_INTEGRITY"
   | "SUBMISSION_UNCERTAIN"
   | "POLICY_BUDGET_EXHAUSTED"
   | "WORK_LEASE_EXPIRED"
@@ -86,6 +87,9 @@ export function classifyCouncilFailure(error: unknown): CouncilFailureClassifica
   }
   if (/sign in|signed out|session expired|failed to load subscription|authentication/i.test(text)) {
     return { code: "CHATGPT_SIGNED_OUT", retryableBeforeSubmit: false };
+  }
+  if (/composer did not preserve the complete prompt|prompt integrity/i.test(text)) {
+    return { code: "PROMPT_INTEGRITY", retryableBeforeSubmit: false };
   }
   if (/response.*stable completion|response.*stalled|did not create an assistant response/i.test(text)) {
     return { code: "RESPONSE_STALLED", retryableBeforeSubmit: false };

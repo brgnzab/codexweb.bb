@@ -94,10 +94,17 @@ test("browser-only startup keeps Tunnel and full MCP optional while the Council 
 
 test("normal startup probes ChatGPT and starts the local Council runtime before showing the renderer", () => {
   const entry = fs.readFileSync(path.join(root, "electron", "main-council.cjs"), "utf8");
-  const authProbe = entry.indexOf("await browserHost.refreshAuthentication()");
-  const bootstrap = entry.indexOf("await bootstrapCouncilRuntime({ stateStore, logger })");
-  const renderer = entry.lastIndexOf("await loadRenderer(mainWindow)");
-  assert.ok(authProbe >= 0 && bootstrap > authProbe && renderer > bootstrap);
+  const startIndex = entry.indexOf("async function start()");
+  const endIndex = entry.indexOf("\nvoid start().catch", startIndex);
+  assert.ok(startIndex >= 0 && endIndex > startIndex);
+  const startSource = entry.slice(startIndex, endIndex);
+  const ready = startSource.indexOf("await browserHost.ready()");
+  const cache = startSource.indexOf("if (freshBuild) await browserHost.clearCachePreservingSession()");
+  const authProbe = startSource.indexOf("await browserHost.refreshAuthentication()");
+  const bootstrap = startSource.indexOf("await bootstrapCouncilRuntime({ stateStore, logger })");
+  const supervisor = startSource.indexOf("councilConnectionSupervisor.start()");
+  const renderer = startSource.lastIndexOf("await loadRenderer(mainWindow)");
+  assert.ok(ready >= 0 && cache > ready && authProbe > cache && bootstrap > authProbe && supervisor > bootstrap && renderer > supervisor);
   assert.match(entry, /prepareFreshBuild/);
   assert.match(entry, /launcher:council-runtime-start/);
   assert.match(entry, /launcher:clear-cache/);

@@ -4,15 +4,39 @@ import "./project-relay.css";
 type Peer = { name: string; kind: "gw" | "codex" | "work"; conversation: string };
 export type ProjectRelayInput = { requestId: string; name: string; task: string; peers: [Peer, Peer]; maxTurns: number; resumeId?: string };
 type ProjectRelayDraft = Omit<ProjectRelayInput, "requestId" | "resumeId">;
-export type ProjectRelayView = ProjectRelayInput & { id: string; state: string; result?: string; turns: { id: string; peer: number; state: string; answer?: string }[] };
+export type ProjectRelayView = ProjectRelayInput & {
+  id: string;
+  state: string;
+  result?: string;
+  event?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  turns: { id: string; peer: number; state: string; answer?: string; receipt?: string }[];
+};
 export type ProjectRelaySnapshot = { relays: ProjectRelayView[]; bridge: { connected: boolean; lastSeen?: string; error?: string } };
 const api = window.codexWebLauncher!;
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const blankDraft = (): ProjectRelayDraft => ({ name: "", task: "", peers: [{ name: "First participant", kind: "gw", conversation: "" }, { name: "Second participant", kind: "codex", conversation: "" }], maxTurns: 20 });
 const copyDraft = (draft: ProjectRelayDraft): ProjectRelayDraft => ({ ...draft, peers: draft.peers.map(peer => ({ ...peer })) as [Peer, Peer] });
 let savedDraft = blankDraft();
-const unresolvedRelay = (relay: ProjectRelayView) => relay.state === "running" || relay.state === "blocked" || relay.state === "uncertain";
-const stoppedRelay = (relay: ProjectRelayView) => relay.state === "stopped" || relay.state === "cancelled";
+const participantLabel = (peer: number) => peer === 0 ? "First" : "Second";
+const recoverableRelay = (relay: ProjectRelayView) => relay.state !== "running" && relay.state !== "uat-ready";
+const eventLabel = (relay: ProjectRelayView): string => {
+  if (relay.event) return relay.event;
+  if (/composer did not preserve the complete prompt|prompt integrity/i.test(relay.result ?? "")) return "Composer integrity failure";
+  if (relay.state === "terminated") return "Relay terminated unexpectedly";
+  if (relay.state === "failed") return "Delivery failed";
+  if (relay.state === "uncertain") return "Submission outcome uncertain";
+  if (relay.state === "stopped" || relay.state === "cancelled") return "Relay stopped";
+  if (relay.state === "uat-ready") return "UAT ready";
+  return "Relay active";
+};
+const displayTimestamp = (relay: ProjectRelayView): string => {
+  const value = relay.updatedAt ?? relay.createdAt;
+  if (!value) return "Unavailable";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+};
 
 export function ProjectRelayPanel() {
   const [snapshot, setSnapshot] = useState<ProjectRelaySnapshot>({ relays: [], bridge: { connected: false } });
@@ -99,16 +123,24 @@ export function ProjectRelayPanel() {
     <h3>Projects</h3>
     {!snapshot.relays.length && <p>No project relays yet.</p>}
     {snapshot.relays.slice().reverse().map(relay => {
-      const awaitingReconciliation = relay.turns.some(turn => turn.state === "submitted");
+      const lastTurn = relay.turns.at(-1);
+      const awaitingReconciliation = lastTurn?.state === "submitted";
+      const settledFailure = lastTurn?.state === "failed" && Boolean(lastTurn.receipt);
+      const resumeBlocked = awaitingReconciliation || settledFailure;
       return <article key={relay.id}>
-        <h3>{relay.name} <span>— {relay.state}</span></h3>
-        <p>{relay.peers.map(peer => `${peer.name} (${peer.kind})`).join(" ↔ ")} · {relay.turns.filter(turn => turn.state === "completed").length} completed handoffs</p>
-        {relay.state === "running" && <p>Current: {relay.peers[relay.turns.at(-1)!.peer]!.name} · {relay.turns.at(-1)!.state}</p>}
-        {relay.result && <pre>{relay.result}</pre>}
-        <details><summary>Conversation bindings and handoff history</summary>{relay.peers.map(peer => <p key={peer.conversation}>{peer.name}: <code>{peer.conversation}</code></p>)}{relay.turns.map((turn, i) => <div key={turn.id}><h4>{i + 1}. {relay.peers[turn.peer]!.name} — {turn.state}</h4>{turn.answer && <pre>{turn.answer}</pre>}</div>)}</details>
-        {unresolvedRelay(relay) && <button disabled={busy} onClick={() => void cancel(relay.id)}>Stop relay</button>}
-        {stoppedRelay(relay) && <button disabled={busy || awaitingReconciliation} onClick={() => void resume(relay)}>Resume relay</button>}
-        {stoppedRelay(relay) && awaitingReconciliation && <p className="relay-safety-note">Stopped. A submitted delivery remains reserved until exact-response reconciliation completes; Resume will not replay it.</p>}
+        <h3>{relay.name}</h3>
+        <p><strong>Participant:</strong> {lastTurn ? participantLabel(lastTurn.peer) : "Unavailable"}</p>
+        <p><strong>Status:</strong> {relay.state}</p>
+        <p><strong>Timestamp:</strong> {displayTimestamp(relay)}</p>
+        <p><strong>Event:</strong> {eventLabel(relay)}</p>
+        <details><summary>Conversation bindings and handoff history</summary>
+          {relay.peers.map((peer, index) => <p key={peer.conversation}>{participantLabel(index)} participant ({peer.name}): <code>{peer.conversation}</code></p>)}
+          {relay.turns.map((turn, i) => <p key={turn.id}>{i + 1}. Participant: {participantLabel(turn.peer)} · Status: {turn.state} · Handoff ID: <code>{turn.id}</code></p>)}
+        </details>
+        {relay.state === "running" && <button disabled={busy} onClick={() => void cancel(relay.id)}>Stop relay</button>}
+        {recoverableRelay(relay) && <button disabled={busy || resumeBlocked} onClick={() => void resume(relay)}>Resume relay</button>}
+        {recoverableRelay(relay) && awaitingReconciliation && <p className="relay-safety-note">Resume is waiting for exact-response reconciliation because the last delivery crossed the submission boundary. It will not be replayed.</p>}
+        {recoverableRelay(relay) && settledFailure && <p className="relay-safety-note">The exact response was received but could not be accepted. Replaying that delivery is unsafe; inspect the failed handoff before continuing.</p>}
       </article>;
     })}
   </section>;

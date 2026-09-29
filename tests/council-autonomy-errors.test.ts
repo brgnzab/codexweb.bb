@@ -23,6 +23,13 @@ describe("Council autonomy errors", () => {
     });
   });
 
+  test("classifies composer integrity failures without making them automatic retries", () => {
+    expect(classifyCouncilFailure(new Error("ChatGPT Council composer did not preserve the complete prompt (expectedChars=20101, actualChars=20101, commonPrefixChars=11986)"))).toEqual({
+      code: "PROMPT_INTEGRITY",
+      retryableBeforeSubmit: false,
+    });
+  });
+
   test("does not treat an unknown error as retryable", () => {
     expect(classifyCouncilFailure(new Error("unexpected"))).toEqual({
       code: "UNKNOWN",

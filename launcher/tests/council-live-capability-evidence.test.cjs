@@ -7,16 +7,21 @@ const { isCouncilRuntimeLive, setCouncilRuntimeLive } = require("../electron/cou
 
 const supervisorSource = readFileSync(join(__dirname, "..", "electron", "runtime-supervisor.cjs"), "utf8");
 
-test("Council capability readiness follows live runtime evidence rather than persisted setup history", () => {
+test("Council capability readiness follows live runtime evidence and active mode", () => {
   setCouncilRuntimeLive(false);
   assert.equal(isCouncilRuntimeLive(), false);
-  assert.equal(deriveCouncilCapabilities({ configured: true, runtimeLive: false }).wakeEngine.available, false);
+  assert.equal(deriveCouncilCapabilities({ configured: true, mode: "full", runtimeLive: false }).wakeEngine.available, false);
 
   setCouncilRuntimeLive(true);
   assert.equal(isCouncilRuntimeLive(), true);
-  assert.equal(deriveCouncilCapabilities({ configured: true, runtimeLive: false }).secureTunnel.available, true);
-  assert.equal(deriveCouncilCapabilities({ configured: true, runtimeLive: false }).fullMcp.available, true);
-  assert.equal(deriveCouncilCapabilities({ configured: true, runtimeLive: false }).wakeEngine.available, true);
+  const browserOnly = deriveCouncilCapabilities({ configured: true, mode: "browser-only", runtimeLive: false });
+  assert.equal(browserOnly.wakeEngine.available, true);
+  assert.equal(browserOnly.secureTunnel.available, false);
+  assert.equal(browserOnly.fullMcp.available, false);
+  const full = deriveCouncilCapabilities({ configured: true, mode: "full", runtimeLive: false });
+  assert.equal(full.secureTunnel.available, true);
+  assert.equal(full.fullMcp.available, true);
+  assert.equal(full.wakeEngine.available, true);
 
   setCouncilRuntimeLive(false);
 });

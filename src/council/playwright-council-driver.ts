@@ -22,7 +22,8 @@ const PAGE_TIMEOUT_MS = 60_000;
 const SUBMISSION_TIMEOUT_MS = 30_000;
 const RESPONSE_TIMEOUT_MS = 45 * 60_000;
 const DIAGNOSTIC_SAMPLE_MS = 1_500;
-const INSERT_CHUNK_CHARS = 12_000;
+const INSERT_CHUNK_CHARS = 4_000;
+const INSERT_SETTLE_TIMEOUT_MS = 2_000;
 const CONNECTOR_MENU_TIMEOUT_MS = 4_000;
 
 interface DriverInput {
@@ -68,6 +69,19 @@ async function composerText(composer: Locator): Promise<string> {
   });
 }
 
+async function moveComposerCaretToEnd(composer: Locator): Promise<void> {
+  await composer.focus();
+  await composer.evaluate(element => {
+    const selection = window.getSelection();
+    if (!selection) throw new Error("ChatGPT Council composer selection is unavailable");
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+}
+
 function councilPromptCodeUnitEquivalent(expected: string, observed: string, index: number): boolean {
   const expectedUnit = expected[index];
   const observedUnit = observed[index];
@@ -89,6 +103,18 @@ export function councilPromptEquivalentPrefixLength(expected: string, observed: 
   let index = 0;
   while (index < length && councilPromptCodeUnitEquivalent(expected, observed, index)) index += 1;
   return index;
+}
+
+async function waitForComposerText(composer: Locator, expected: string, signal?: AbortSignal, timeoutMs = INSERT_SETTLE_TIMEOUT_MS): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let observed = "";
+  do {
+    abortIfNeeded(signal);
+    observed = await composerText(composer);
+    if (councilPromptTextEquivalent(expected, observed)) return observed;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  } while (Date.now() < deadline);
+  return observed;
 }
 
 function selectedCouncilConnector(composer: Locator): Locator {
@@ -163,9 +189,9 @@ async function attachExactPrompt(
   onPhase?: CouncilExecutionPhaseObserver,
   onExecution?: CouncilExecutionObserver,
 ): Promise<Locator> {
-  const { composer, connectorSelected } = await trySelectCouncilConnector(page, signal, onPhase, onExecution);
-  await composer.focus();
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End");
+  const selection = await trySelectCouncilConnector(page, signal, onPhase, onExecution);
+  let composer = selection.composer;
+  const connectorSelected = selection.connectorSelected;
   const transported = ` ${prompt}`;
   for (let offset = 0; offset < transported.length;) {
     abortIfNeeded(signal);
@@ -175,7 +201,18 @@ async function attachExactPrompt(
       const next = transported.charCodeAt(end);
       if (previous >= 0xD800 && previous <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) end -= 1;
     }
+    // ChatGPT's contenteditable may re-render between large insertions. Re-acquire the live
+    // composer and restore the caret to the real end before every chunk so the next chunk cannot
+    // be inserted back at an earlier Lexical selection.
+    composer = await visibleComposer(page);
+    await moveComposerCaretToEnd(composer);
     await page.keyboard.insertText(transported.slice(offset, end));
+    const expectedSoFar = transported.slice(1, end);
+    const observedSoFar = await waitForComposerText(composer, expectedSoFar, signal);
+    if (!councilPromptTextEquivalent(expectedSoFar, observedSoFar)) {
+      const prefix = councilPromptEquivalentPrefixLength(expectedSoFar, observedSoFar);
+      throw new Error(`ChatGPT Council composer did not preserve the complete prompt (expectedChars=${prompt.length}, actualChars=${observedSoFar.length}, commonPrefixChars=${prefix})`);
+    }
     offset = end;
   }
   const deadline = Date.now() + 10_000;

@@ -62,7 +62,7 @@ describe("Owner lifecycle control", () => {
   });
 
   test("browser uncertainty remains submitted so Stop cannot silently release an ambiguous send", async () => {
-    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => { throw new Error("connection lost after submit"); } });
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async (_target, _prompt, _deliveryId, onPhase) => { onPhase?.("submit-started"); throw new Error("connection lost after submit"); } });
     const started = service.start(input("request-1", "gw", "work"));
     await service.idle();
     expect(service.list()[0]!.state).toBe("uncertain");
@@ -72,14 +72,14 @@ describe("Owner lifecycle control", () => {
     expect(() => service.start(input("request-2", "gw", "work"))).toThrow("active or unresolved relay");
   });
 
-  test("restart stops an active relay and only explicit Resume makes its queued delivery claimable", () => {
+  test("restart marks an active relay terminated and only explicit Resume makes its queued delivery claimable", () => {
     const path = join(root(), "relay.json");
     const service = new ProjectRelayService(path, { run: async () => "unused" });
     const started = service.start(input("request-1"));
     const originalTurn = started.turns[0]!.id;
 
     const restored = new ProjectRelayService(path, { run: async () => "unused" });
-    expect(restored.list()[0]!.state).toBe("stopped");
+    expect(restored.list()[0]!.state).toBe("terminated");
     expect(restored.list()[0]!.turns[0]!.id).toBe(originalTurn);
     expect(restored.claim("controller")).toBeNull();
 
@@ -138,24 +138,55 @@ describe("Owner lifecycle control", () => {
     expect(service.list()[0]!.turns).toHaveLength(1);
     expect(service.list()[0]!.turns[0]!.state).toBe("submitted");
   });
+
+  test("pre-submit browser failure is failed, visible and directly resumable", async () => {
+    let calls = 0;
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async (_target, _prompt, _deliveryId, onPhase) => {
+      calls++;
+      if (calls === 1) throw new Error("ChatGPT Council composer did not preserve the complete prompt (expectedChars=20101, actualChars=20101, commonPrefixChars=11986)");
+      onPhase?.("submit-started");
+      return "Recovered response.\nCWC_STATE: CONTINUE";
+    } });
+    const started = service.start(input("request-pre-submit", "gw", "work"));
+    await service.idle();
+    expect(service.list()[0]!).toMatchObject({ state: "failed", event: "Composer integrity failure" });
+    expect(service.list()[0]!.turns[0]!.state).toBe("failed");
+
+    service.resume(started.id);
+    await service.idle();
+    expect(calls).toBe(2);
+    expect(service.list()[0]!.state).toBe("running");
+    expect(service.list()[0]!.turns[0]!.state).toBe("completed");
+    expect(service.list()[0]!.turns[1]!.state).toBe("queued");
+  });
 });
 
 describe("Owner UI regression contracts", () => {
-  test("Project Relay owns its viewport scroll and exposes Stop/Resume/CLEAR controls", () => {
+  test("Project Relay owns its viewport scroll and exposes compact lifecycle controls", () => {
     const css = readFileSync(join(import.meta.dir, "..", "launcher", "src", "project-relay.css"), "utf8");
     const panel = readFileSync(join(import.meta.dir, "..", "launcher", "src", "ProjectRelayPanel.tsx"), "utf8");
     const http = readFileSync(join(import.meta.dir, "..", "src", "council", "http-server.ts"), "utf8");
+    const main = readFileSync(join(import.meta.dir, "..", "src", "council", "mcp-main.ts"), "utf8");
     expect(css).toContain("height: 100%");
     expect(css).toContain("overflow-y: auto");
-    expect(panel).toContain('relay.state === "blocked"');
-    expect(panel).toContain('relay.state === "uncertain"');
-    expect(panel).toContain('relay.state === "stopped"');
+    expect(panel).toContain('relay.state === "terminated"');
+    expect(panel).toContain('relay.state === "failed"');
+    expect(panel).toContain("recoverableRelay(relay)");
     expect(panel).toContain(">Stop relay</button>");
     expect(panel).toContain(">Resume relay</button>");
     expect(panel).toContain(">CLEAR</button>");
     expect(panel).toContain("resumeId: relay.id");
     expect(panel).toContain("let savedDraft = blankDraft()");
+    expect(panel).toContain("<strong>Participant:</strong>");
+    expect(panel).toContain("<strong>Status:</strong>");
+    expect(panel).toContain("<strong>Timestamp:</strong>");
+    expect(panel).toContain("<strong>Event:</strong>");
+    expect(panel).toContain("Handoff ID:");
+    expect(panel).not.toContain("<pre>{relay.result}</pre>");
+    expect(panel).not.toContain("turn.answer && <pre>");
     expect(http).toContain('["requestId", "name", "task", "peers", "maxTurns", "resumeId"]');
+    expect(main).toContain("run: async (peer, prompt, deliveryId, onPhase)");
+    expect(main).toContain("transport.run({ agentId, conversationUrl: peer.conversation, prompt, onPhase })");
   });
 
   test("other manual-entry pages retain drafts in renderer memory and CLEAR only those drafts", () => {

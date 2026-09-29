@@ -102,12 +102,12 @@ describe("Durability and no duplicate submissions", () => {
     first.start(input()); const job: any = first.claim("controller"); first.submitting(...ids(job));
     time += 999999;
     const restored = new ProjectRelayService(path, { run: async () => "unused" }, () => time);
-    expect(restored.list()[0]!.state).toBe("stopped");
+    expect(restored.list()[0]!.state).toBe("terminated");
     expect(restored.claim("other-controller")).toBeNull();
     expect(restored.claim("controller")).toMatchObject({ deliveryId: job.deliveryId, state: "submitted" });
     expect(() => restored.submitting(...ids(job))).toThrow();
     restored.finish(...ids(job), answer(0), "receipt"); restored.finish(...ids(job), answer(0), "receipt");
-    expect(restored.list()[0]!.state).toBe("stopped");
+    expect(restored.list()[0]!.state).toBe("terminated");
     expect(restored.list()[0]!.turns).toHaveLength(1);
     restored.resume(restored.list()[0]!.id);
     expect(restored.list()[0]!.state).toBe("running");
@@ -121,13 +121,13 @@ describe("Durability and no duplicate submissions", () => {
     const next: any = service.claim("replacement"); expect(next.deliveryId).toBe(old.deliveryId); expect(next.lease).not.toBe(old.lease);
     expect(() => service.submitting(...ids(old))).toThrow(); service.submitting(...ids(next));
   });
-  test("restart at browser send boundary stops and never replays", async () => {
+  test("restart at browser send boundary terminates and never replays", async () => {
     const path = join(root(), "relay.json");
     const service = new ProjectRelayService(path, { run: async () => "unused" }); service.start(input());
     const persisted = JSON.parse(readFileSync(path, "utf8")); persisted.sessions[0].peers[0] = peer("gw", 0); persisted.sessions[0].turns[0].state = "submitted"; writeFileSync(path, JSON.stringify(persisted));
     let calls = 0;
     const restored = new ProjectRelayService(path, { run: async () => { calls++; return answer(0); } }); restored.kick(); await restored.idle();
-    expect(calls).toBe(0); expect(restored.list()[0]!.state).toBe("stopped");
+    expect(calls).toBe(0); expect(restored.list()[0]!.state).toBe("terminated");
     expect(() => restored.resume(restored.list()[0]!.id)).toThrow("exact-response reconciliation");
   });
   test("stop during a submitted turn accepts its receipt without scheduling the peer until Resume", () => {
@@ -140,11 +140,32 @@ describe("Durability and no duplicate submissions", () => {
     service.resume(session.id);
     expect(service.list()[0]!.state).toBe("running"); expect(service.list()[0]!.turns).toHaveLength(2);
   });
-  test("driver error after submission becomes uncertain without a second attempt", async () => {
+  test("driver error after actual submission becomes uncertain without a second attempt", async () => {
     let calls = 0;
-    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => { calls++; throw new Error("connection lost"); } });
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async (_target, _prompt, _deliveryId, onPhase) => { calls++; onPhase?.("submit-started"); throw new Error("connection lost"); } });
     service.start(input("gw", "work")); await service.idle(); service.kick(); await service.idle();
     expect(calls).toBe(1); expect(service.list()[0]!.state).toBe("uncertain");
+    expect(service.list()[0]!.turns.at(-1)!.state).toBe("submitted");
+  });
+  test("pre-submit GW failure remains safely resumable and does not masquerade as uncertainty", async () => {
+    let calls = 0;
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async (_target, _prompt, _deliveryId, onPhase) => {
+      calls++;
+      if (calls === 1) throw new Error("ChatGPT Council composer did not preserve the complete prompt (expectedChars=20101, actualChars=20101, commonPrefixChars=11986)");
+      onPhase?.("submit-started");
+      return answer(0);
+    } });
+    const started = service.start(input("gw", "work")); await service.idle();
+    let relay = service.list()[0]!;
+    expect(relay.state).toBe("failed");
+    expect(relay.turns[0]!.state).toBe("failed");
+    expect(relay.event).toBe("Composer integrity failure");
+    service.resume(started.id); await service.idle();
+    relay = service.list()[0]!;
+    expect(calls).toBe(2);
+    expect(relay.state).toBe("running");
+    expect(relay.turns[0]!.state).toBe("completed");
+    expect(relay.turns[1]!.state).toBe("queued");
   });
 });
 
