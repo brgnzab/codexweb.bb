@@ -248,10 +248,14 @@ export class ProjectRelayService {
           turn.claimedAt = this.now();
           this.mark(session, "Preparing handoff");
           this.persist();
+          // This local boundary marker is visible to the outer catch; TypeScript
+          // cannot infer the turn-state mutation made inside the driver callback.
+          let submissionStarted = false;
           try {
             const answer = await this.gw.run(session.peers[turn.peer]!, turn.prompt, turn.id, observedPhase => {
               if (observedPhase !== "submit-started") return;
               if (session.state !== "running" || turn.state !== "claimed") throw new Error("Project relay stopped before submission");
+              submissionStarted = true;
               turn.state = "submitted";
               this.mark(session, "Handoff submitted");
               this.persist();
@@ -260,7 +264,7 @@ export class ProjectRelayService {
           } catch (error) {
             if (session.state === "running") {
               const reason = error instanceof Error ? error.message : "Relay delivery failed";
-              if (turn.state === "submitted") {
+              if (submissionStarted) {
                 session.state = "uncertain";
                 session.result = reason;
                 this.mark(session, "Submission outcome uncertain");
