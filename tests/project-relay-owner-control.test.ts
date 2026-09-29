@@ -36,7 +36,7 @@ describe("Owner lifecycle control", () => {
     expect(() => restored.start(input("request-3"))).toThrow("active or unresolved relay");
 
     restored.cancel(started.id);
-    expect(restored.list()[0]!.state).toBe("cancelled");
+    expect(restored.list()[0]!.state).toBe("stopped");
     expect(() => restored.start(input("request-4"))).not.toThrow();
   });
 
@@ -50,13 +50,13 @@ describe("Owner lifecycle control", () => {
     expect(service.list()[0]!.turns.at(-1)!.state).toBe("submitted");
 
     service.cancel(started.id);
-    expect(service.list()[0]!.state).toBe("cancelled");
+    expect(service.list()[0]!.state).toBe("stopped");
     expect(() => service.start(input("request-2"))).toThrow("active or unresolved relay");
 
     const reconcile: any = service.claim("controller");
     expect(reconcile).toMatchObject({ deliveryId: job.deliveryId, state: "submitted" });
     service.finish(...ids(reconcile), "Recovered exact answer.\nCWC_STATE: CONTINUE", "receipt-2");
-    expect(service.list()[0]!.state).toBe("cancelled");
+    expect(service.list()[0]!.state).toBe("stopped");
     expect(service.list()[0]!.turns).toHaveLength(1);
     expect(() => service.start(input("request-3"))).not.toThrow();
   });
@@ -68,21 +68,94 @@ describe("Owner lifecycle control", () => {
     expect(service.list()[0]!.state).toBe("uncertain");
     expect(service.list()[0]!.turns.at(-1)!.state).toBe("submitted");
     service.cancel(started.id);
+    expect(service.list()[0]!.state).toBe("stopped");
     expect(() => service.start(input("request-2", "gw", "work"))).toThrow("active or unresolved relay");
+  });
+
+  test("restart stops an active relay and only explicit Resume makes its queued delivery claimable", () => {
+    const path = join(root(), "relay.json");
+    const service = new ProjectRelayService(path, { run: async () => "unused" });
+    const started = service.start(input("request-1"));
+    const originalTurn = started.turns[0]!.id;
+
+    const restored = new ProjectRelayService(path, { run: async () => "unused" });
+    expect(restored.list()[0]!.state).toBe("stopped");
+    expect(restored.list()[0]!.turns[0]!.id).toBe(originalTurn);
+    expect(restored.claim("controller")).toBeNull();
+
+    const resumed = restored.start({ ...input("resume-request"), resumeId: started.id });
+    expect(resumed.state).toBe("running");
+    expect(resumed.turns).toHaveLength(1);
+    const job: any = restored.claim("controller");
+    expect(job.deliveryId).toBe(originalTurn);
+  });
+
+  test("Stop during a claimed pre-submit delivery requeues the same delivery for explicit Resume", () => {
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
+    const started = service.start(input("request-1"));
+    const first: any = service.claim("controller");
+    expect(first.state).toBe("claimed");
+
+    const stopped = service.cancel(started.id);
+    expect(stopped.state).toBe("stopped");
+    expect(stopped.turns[0]!.state).toBe("queued");
+    expect(service.claim("controller")).toBeNull();
+
+    service.resume(started.id);
+    const resumed: any = service.claim("controller");
+    expect(resumed.deliveryId).toBe(first.deliveryId);
+    expect(resumed.lease).not.toBe(first.lease);
+  });
+
+  test("Resume after stopped exact reconciliation schedules one next handoff without replay", () => {
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
+    const started = service.start(input("request-1"));
+    const job: any = service.claim("controller");
+    service.submitting(...ids(job));
+    service.cancel(started.id);
+    service.finish(...ids(job), "Recovered exact answer.\nCWC_STATE: CONTINUE", "receipt-1");
+    expect(service.list()[0]!.turns).toHaveLength(1);
+    expect(service.list()[0]!.turns[0]!.state).toBe("completed");
+
+    const resumed = service.resume(started.id);
+    expect(resumed.state).toBe("running");
+    expect(resumed.turns).toHaveLength(2);
+    expect(resumed.turns[0]!.id).toBe(job.deliveryId);
+    expect(resumed.turns[1]!.peer).toBe(1);
+    expect(resumed.turns[1]!.state).toBe("queued");
+  });
+
+  test("Resume never replays an ambiguous submitted delivery", () => {
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
+    const started = service.start(input("request-1"));
+    const job: any = service.claim("controller");
+    service.submitting(...ids(job));
+    service.fail(...ids(job), "transport lost after submit");
+    service.cancel(started.id);
+
+    expect(() => service.resume(started.id)).toThrow("exact-response reconciliation");
+    expect(service.list()[0]!.state).toBe("stopped");
+    expect(service.list()[0]!.turns).toHaveLength(1);
+    expect(service.list()[0]!.turns[0]!.state).toBe("submitted");
   });
 });
 
 describe("Owner UI regression contracts", () => {
-  test("Project Relay owns its viewport scroll and exposes Stop/CLEAR controls for unresolved relays", () => {
+  test("Project Relay owns its viewport scroll and exposes Stop/Resume/CLEAR controls", () => {
     const css = readFileSync(join(import.meta.dir, "..", "launcher", "src", "project-relay.css"), "utf8");
     const panel = readFileSync(join(import.meta.dir, "..", "launcher", "src", "ProjectRelayPanel.tsx"), "utf8");
+    const http = readFileSync(join(import.meta.dir, "..", "src", "council", "http-server.ts"), "utf8");
     expect(css).toContain("height: 100%");
     expect(css).toContain("overflow-y: auto");
     expect(panel).toContain('relay.state === "blocked"');
     expect(panel).toContain('relay.state === "uncertain"');
+    expect(panel).toContain('relay.state === "stopped"');
     expect(panel).toContain(">Stop relay</button>");
+    expect(panel).toContain(">Resume relay</button>");
     expect(panel).toContain(">CLEAR</button>");
+    expect(panel).toContain("resumeId: relay.id");
     expect(panel).toContain("let savedDraft = blankDraft()");
+    expect(http).toContain('["requestId", "name", "task", "peers", "maxTurns", "resumeId"]');
   });
 
   test("other manual-entry pages retain drafts in renderer memory and CLEAR only those drafts", () => {

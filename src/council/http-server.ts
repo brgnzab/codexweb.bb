@@ -206,7 +206,7 @@ function ownerExactKeys(body: Record<string, unknown>, allowed: readonly string[
 
 const OWNER_ROUTE_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "/api/owner/project-relay/list": [],
-  "/api/owner/project-relay/start": ["requestId", "name", "task", "peers", "maxTurns"],
+  "/api/owner/project-relay/start": ["requestId", "name", "task", "peers", "maxTurns", "resumeId"],
   "/api/owner/project-relay/cancel": ["relay_id"],
   "/api/owner/project-relay/claim": ["worker"],
   "/api/owner/project-relay/submitting": ["relay_id", "delivery_id", "lease"],

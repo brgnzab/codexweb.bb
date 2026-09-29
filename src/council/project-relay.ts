@@ -4,16 +4,17 @@ import { dirname } from "node:path";
 import { assertChatGptConversationUrl } from "./conversation-registry";
 
 export type RelayPeer = { name: string; kind: "gw" | "codex" | "work"; conversation: string };
-export type RelayState = "running" | "blocked" | "uncertain" | "uat-ready" | "cancelled";
+export type RelayState = "running" | "blocked" | "uncertain" | "uat-ready" | "stopped" | "cancelled";
 type TurnState = "queued" | "claimed" | "submitted" | "completed" | "failed";
 export type RelayTurn = { id: string; peer: number; prompt: string; state: TurnState; answer?: string; signal?: string; lease?: string; worker?: string; claimedAt?: number; receipt?: string };
 export type ProjectRelay = { id: string; requestId: string; name: string; task: string; peers: [RelayPeer, RelayPeer]; maxTurns: number; state: RelayState; turns: RelayTurn[]; result?: string; createdAt: string };
-export type RelayInput = { requestId: string; name: string; task: string; peers: [RelayPeer, RelayPeer]; maxTurns?: number };
+export type RelayInput = { requestId: string; name: string; task: string; peers: [RelayPeer, RelayPeer]; maxTurns?: number; resumeId?: string };
 export interface RelayGwDriver { run(peer: RelayPeer, prompt: string, deliveryId: string): Promise<string> }
-const terminal = new Set<RelayState>(["blocked", "uncertain", "uat-ready", "cancelled"]);
+const terminal = new Set<RelayState>(["blocked", "uncertain", "uat-ready", "stopped", "cancelled"]);
 const unresolved = new Set<RelayState>(["running", "blocked", "uncertain"]);
 function conversationKey(peer: RelayPeer): string { return peer.kind === "gw" ? new URL(peer.conversation).pathname.slice(3).toLowerCase() : peer.conversation.toLowerCase(); }
 function reservesBindings(session: ProjectRelay): boolean { return unresolved.has(session.state) || session.turns.some(turn => turn.state === "submitted"); }
+function resetClaim(turn: RelayTurn): void { turn.lease = undefined; turn.worker = undefined; turn.claimedAt = undefined; }
 function text(value: unknown, name: string, max: number): string {
   if (typeof value !== "string" || !value.trim() || value.length > max) throw new Error(`${name} must be nonempty text of at most ${max} characters`);
   return value.trim();
@@ -78,12 +79,14 @@ export class ProjectRelayService {
       }
     }
     for (const session of this.sessions) {
+      if (session.state === "cancelled") session.state = "stopped";
       if (session.state !== "running") continue;
-      const turn = session.turns.at(-1);
-      if (turn?.state === "submitted" && session.peers[turn.peer]?.kind === "gw") {
-        session.state = "uncertain";
-        session.result = "CWC restarted after a browser submission. Inspect the bound chat; this delivery will not be replayed.";
-      }
+      const turn = session.turns.at(-1)!;
+      if (turn.state === "claimed") { turn.state = "queued"; resetClaim(turn); }
+      session.state = "stopped";
+      session.result = turn.state === "submitted"
+        ? "CWC restarted after an in-flight submission. The relay is stopped and will not replay it. Exact-response reconciliation is required before Resume."
+        : "CWC restarted while this relay was active. The relay is stopped; press Resume relay to continue.";
     }
     this.persist();
   }
@@ -115,7 +118,9 @@ export class ProjectRelayService {
   }
   start(raw: RelayInput): ProjectRelay {
     if (this.stopped) throw this.storageError ?? new Error("Project relay is stopped");
-    exact(raw, ["requestId", "name", "task", "peers", "maxTurns"]);
+    exact(raw, ["requestId", "name", "task", "peers", "maxTurns", "resumeId"]);
+    text(raw.requestId, "Request ID", 100);
+    if (raw.resumeId !== undefined) return this.resume(text(raw.resumeId, "Relay ID", 128));
     const requestId = text(raw.requestId, "Request ID", 100);
     const prior = this.sessions.find(session => session.requestId === requestId);
     if (prior) return structuredClone(prior);
@@ -136,10 +141,47 @@ export class ProjectRelayService {
   }
   cancel(id: string): ProjectRelay {
     const session = this.require(id);
-    session.state = "cancelled";
-    session.result = "Owner stopped the relay. Any already submitted turn may finish, but no further handoff will be sent.";
+    if (session.state === "uat-ready") throw new Error("UAT-ready relay is already complete");
+    const turn = session.turns.at(-1)!;
+    if (turn.state === "claimed") { turn.state = "queued"; resetClaim(turn); }
+    session.state = "stopped";
+    session.result = turn.state === "submitted"
+      ? "Owner stopped the relay. The submitted delivery remains reserved for exact-response reconciliation; no further handoff will be sent."
+      : "Owner stopped the relay. Press Resume relay to continue from this point.";
     this.persist();
     return structuredClone(session);
+  }
+  resume(id: string): ProjectRelay {
+    const session = this.require(id);
+    if (session.state === "cancelled") session.state = "stopped";
+    if (session.state !== "stopped") throw new Error("Only a stopped relay can be resumed");
+    const conflict = this.sessions.find(other => other.id !== session.id && reservesBindings(other) && other.peers.some(peer => session.peers.some(candidate => conversationKey(candidate) === conversationKey(peer))));
+    if (conflict) throw new Error("A participant chat is now reserved by another active or unresolved relay");
+    const turn = session.turns.at(-1)!;
+    if (turn.state === "submitted") throw new Error("This relay cannot Resume until the submitted delivery has exact-response reconciliation; it will not be replayed");
+    if (turn.state === "claimed") { turn.state = "queued"; resetClaim(turn); }
+    if (turn.state === "failed") {
+      if (turn.receipt) throw new Error("This settled delivery failed after an exact response and cannot be replayed safely");
+      turn.state = "queued"; turn.answer = undefined; turn.signal = undefined; resetClaim(turn);
+    }
+    if (turn.state === "completed") this.resumeAfterCompleted(session, turn);
+    else if (turn.state === "queued") {
+      session.state = "running";
+      session.result = "Owner resumed the relay.";
+    } else throw new Error("Stopped relay has no safe continuation point");
+    this.persist();
+    if (session.state === "running") this.kick();
+    return structuredClone(session);
+  }
+  private resumeAfterCompleted(session: ProjectRelay, turn: RelayTurn): void {
+    const body = turn.answer?.trim();
+    if (!body) throw new Error("Completed relay delivery has no resumable answer");
+    if (turn.signal === "UAT_READY" && turn.peer === 1) { session.state = "uat-ready"; session.result = body; return; }
+    if (session.turns.length >= session.maxTurns) { session.state = "blocked"; session.result = "Relay reached its owner-set turn budget. Last result: " + body; return; }
+    if (session.turns.slice(-4).filter(item => item.answer === body).length >= 3) { session.state = "blocked"; session.result = "Repeated identical answers show no progress. Last result: " + body; return; }
+    session.state = "running";
+    session.result = "Owner resumed the relay.";
+    this.next(session, 1 - turn.peer, body);
   }
   private require(id: string): ProjectRelay { const session = this.sessions.find(value => value.id === id); if (!session) throw new Error("Unknown relay"); return session; }
   private next(session: ProjectRelay, peer: number, context: string): void {
@@ -173,7 +215,7 @@ export class ProjectRelayService {
             const answer = await this.gw.run(session.peers[turn.peer]!, turn.prompt, turn.id);
             this.accept(session, turn, answer, turn.id);
           } catch (error) {
-            // Submission is ambiguous after the send boundary. Keep it submitted so cancellation cannot
+            // Submission is ambiguous after the send boundary. Keep it submitted so stopping cannot
             // release/reuse the bound chat until exact-response reconciliation proves it safe.
             if (session.state === "running") { session.state = "uncertain"; session.result = error instanceof Error ? error.message : "Relay failed after submission; inspect the bound chat"; }
           }

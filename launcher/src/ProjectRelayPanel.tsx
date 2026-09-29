@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import "./project-relay.css";
 
 type Peer = { name: string; kind: "gw" | "codex" | "work"; conversation: string };
-export type ProjectRelayInput = { requestId: string; name: string; task: string; peers: [Peer, Peer]; maxTurns: number };
-type ProjectRelayDraft = Omit<ProjectRelayInput, "requestId">;
+export type ProjectRelayInput = { requestId: string; name: string; task: string; peers: [Peer, Peer]; maxTurns: number; resumeId?: string };
+type ProjectRelayDraft = Omit<ProjectRelayInput, "requestId" | "resumeId">;
 export type ProjectRelayView = ProjectRelayInput & { id: string; state: string; result?: string; turns: { id: string; peer: number; state: string; answer?: string }[] };
 export type ProjectRelaySnapshot = { relays: ProjectRelayView[]; bridge: { connected: boolean; lastSeen?: string; error?: string } };
 const api = window.codexWebLauncher!;
@@ -12,6 +12,7 @@ const blankDraft = (): ProjectRelayDraft => ({ name: "", task: "", peers: [{ nam
 const copyDraft = (draft: ProjectRelayDraft): ProjectRelayDraft => ({ ...draft, peers: draft.peers.map(peer => ({ ...peer })) as [Peer, Peer] });
 let savedDraft = blankDraft();
 const unresolvedRelay = (relay: ProjectRelayView) => relay.state === "running" || relay.state === "blocked" || relay.state === "uncertain";
+const stoppedRelay = (relay: ProjectRelayView) => relay.state === "stopped" || relay.state === "cancelled";
 
 export function ProjectRelayPanel() {
   const [snapshot, setSnapshot] = useState<ProjectRelaySnapshot>({ relays: [], bridge: { connected: false } });
@@ -61,6 +62,21 @@ export function ProjectRelayPanel() {
     catch (failure) { setError(errorText(failure)); }
     finally { setBusy(false); }
   };
+  const resume = async (relay: ProjectRelayView) => {
+    setBusy(true); setError("");
+    try {
+      await api.projectRelayStart({
+        requestId: crypto.randomUUID(),
+        resumeId: relay.id,
+        name: relay.name,
+        task: relay.task,
+        peers: relay.peers,
+        maxTurns: relay.maxTurns,
+      });
+      setSnapshot(await api.projectRelayList());
+    } catch (failure) { setError(errorText(failure)); }
+    finally { setBusy(false); }
+  };
   return <section className="project-relay">
     <header><h2>Work between your existing chats</h2><p>Choose a worker and reviewer, give them the task, and let CWC carry their answers back and forth until a blocker or UAT-ready result.</p></header>
     <p role="status">Desktop bridge: <strong>{snapshot.bridge.connected ? "Connected" : "Not connected"}</strong>{!snapshot.bridge.connected && " — GPT Web pairs can run now. Codex/Work deliveries wait for the CWC controller."}</p>
@@ -91,7 +107,8 @@ export function ProjectRelayPanel() {
         {relay.result && <pre>{relay.result}</pre>}
         <details><summary>Conversation bindings and handoff history</summary>{relay.peers.map(peer => <p key={peer.conversation}>{peer.name}: <code>{peer.conversation}</code></p>)}{relay.turns.map((turn, i) => <div key={turn.id}><h4>{i + 1}. {relay.peers[turn.peer]!.name} — {turn.state}</h4>{turn.answer && <pre>{turn.answer}</pre>}</div>)}</details>
         {unresolvedRelay(relay) && <button disabled={busy} onClick={() => void cancel(relay.id)}>Stop relay</button>}
-        {relay.state === "cancelled" && awaitingReconciliation && <p className="relay-safety-note">Stopped. A submitted delivery remains reserved until exact-response reconciliation completes.</p>}
+        {stoppedRelay(relay) && <button disabled={busy || awaitingReconciliation} onClick={() => void resume(relay)}>Resume relay</button>}
+        {stoppedRelay(relay) && awaitingReconciliation && <p className="relay-safety-note">Stopped. A submitted delivery remains reserved until exact-response reconciliation completes; Resume will not replay it.</p>}
       </article>;
     })}
   </section>;
