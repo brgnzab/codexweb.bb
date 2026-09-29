@@ -21,6 +21,7 @@ const copyDraft = (draft: ProjectRelayDraft): ProjectRelayDraft => ({ ...draft, 
 let savedDraft = blankDraft();
 const participantLabel = (peer: number) => peer === 0 ? "First" : "Second";
 const recoverableRelay = (relay: ProjectRelayView) => relay.state !== "running" && relay.state !== "uat-ready";
+const stoppableRelay = (relay: ProjectRelayView) => relay.state === "running" || relay.state === "blocked";
 const eventLabel = (relay: ProjectRelayView): string => {
   if (relay.event) return relay.event;
   if (/composer did not preserve the complete prompt|prompt integrity/i.test(relay.result ?? "")) return "Composer integrity failure";
@@ -137,7 +138,7 @@ export function ProjectRelayPanel() {
           {relay.peers.map((peer, index) => <p key={peer.conversation}>{participantLabel(index)} participant ({peer.name}): <code>{peer.conversation}</code></p>)}
           {relay.turns.map((turn, i) => <p key={turn.id}>{i + 1}. Participant: {participantLabel(turn.peer)} · Status: {turn.state} · Handoff ID: <code>{turn.id}</code></p>)}
         </details>
-        {relay.state === "running" && <button disabled={busy} onClick={() => void cancel(relay.id)}>Stop relay</button>}
+        {stoppableRelay(relay) && <button disabled={busy} onClick={() => void cancel(relay.id)}>Stop relay</button>}
         {recoverableRelay(relay) && <button disabled={busy || resumeBlocked} onClick={() => void resume(relay)}>Resume relay</button>}
         {recoverableRelay(relay) && awaitingReconciliation && <p className="relay-safety-note">Resume is waiting for exact-response reconciliation because the last delivery crossed the submission boundary. It will not be replayed.</p>}
         {recoverableRelay(relay) && settledFailure && <p className="relay-safety-note">The exact response was received but could not be accepted. Replaying that delivery is unsafe; inspect the failed handoff before continuing.</p>}
