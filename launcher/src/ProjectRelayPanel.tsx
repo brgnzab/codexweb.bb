@@ -42,6 +42,17 @@ export function assignProjectRelayParticipant(index: 0 | 1, conversation: string
   };
   return url;
 }
+export function RelayAssignmentControls({ conversation, busy }: { conversation?: string; busy: boolean }) {
+  const [participant, setParticipant] = useState<0 | 1>(0);
+  const assignable = canAssignProjectRelayConversation(conversation);
+  return <div className="relay-chat-assign">
+    <select aria-label="Relay participant" value={participant} disabled={busy} onChange={event => setParticipant(event.target.value === "1" ? 1 : 0)}>
+      <option value={0}>Participant 1</option>
+      <option value={1}>Participant 2</option>
+    </select>
+    <button type="button" disabled={busy || !assignable} title={assignable ? `Assign current chat to Participant ${participant + 1}` : "Open an existing ChatGPT conversation first"} onClick={() => { if (conversation) assignProjectRelayParticipant(participant, conversation); }}>USE CURRENT CHAT</button>
+  </div>;
+}
 
 const participantLabel = (peer: number) => peer === 0 ? "First" : "Second";
 const recoverableRelay = (relay: ProjectRelayView) => relay.state !== "running" && relay.state !== "uat-ready";
