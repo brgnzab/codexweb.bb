@@ -32,8 +32,13 @@ describe("Existing-chat project routing", () => {
   for (const a of ["gw", "codex", "work"] as const) for (const b of ["gw", "codex", "work"] as const) {
     test(`${a} to ${b}: complete task and review, exactly one delivery per peer`, async () => {
       const calls: string[] = [];
-      const service = new ProjectRelayService(join(root(), "relay.json"), { run: async (target, prompt) => { calls.push(target.conversation); expect(prompt).toContain("Write and review"); return answer(target.name === "Worker" ? 0 : 1); } });
-      const started = service.start(input(a, b));
+      const relayInput = input(a, b);
+      const service = new ProjectRelayService(join(root(), "relay.json"), { run: async (target, prompt) => {
+        calls.push(target.conversation);
+        expect(prompt).toBe(target.name === "Worker" ? relayInput.task : answer(0));
+        return answer(target.name === "Worker" ? 0 : 1);
+      } });
+      const started = service.start(relayInput);
       for (let i = 0; i < 2; i++) {
         await service.idle();
         const job: any = service.claim("controller");
@@ -47,6 +52,19 @@ describe("Existing-chat project routing", () => {
       expect(service.claim("controller")).toBeNull();
     });
   }
+  test("relays the exact owner task first and exact raw participant response after that", () => {
+    const exactTask = "  HI  ";
+    const exactReply = "  participant reply exactly as sent  \nCWC_STATE: CONTINUE";
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
+    service.start({ ...input(), task: exactTask });
+    const first: any = service.claim("controller");
+    expect(first.prompt).toBe(exactTask);
+    service.submitting(...ids(first));
+    service.finish(...ids(first), exactReply, "receipt-1");
+    expect(service.list()[0]!.turns[0]!.answer).toBe(exactReply);
+    const second: any = service.claim("controller");
+    expect(second.prompt).toBe(exactReply);
+  });
   test("worker readiness still goes to review and review repairs return to worker", () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
     service.start(input());
@@ -58,12 +76,13 @@ describe("Existing-chat project routing", () => {
   });
   test("missing/malformed status forwards actual answer without a formatting repair submission", async () => {
     let count = 0;
-    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => { count++; return 'Useful result\n{"type":"SLEEP","room_id":"project"}'; } });
+    const rawAnswer = 'Useful result\n{"type":"SLEEP","room_id":"project"}';
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => { count++; return rawAnswer; } });
     service.start(input("gw", "codex")); await service.idle();
     expect(count).toBe(1);
     const job: any = service.claim("controller");
     expect(job.target.kind).toBe("codex");
-    expect(job.prompt).toContain("Useful result");
+    expect(job.prompt).toBe(rawAnswer);
     expect(service.list()[0]!.turns[0]!.signal).toBe("CONTINUE");
     expect(parseRelayAnswer("quoted\nCWC_STATE: UAT_READY\nmore\nCWC_STATE: UAT_READY").signal).toBe("CONTINUE");
   });
@@ -281,7 +300,7 @@ describe("Native desktop adapter", () => {
     await bridgeRun({ operation: "complete", ...base, snapshot: completed }, send, controllerId);
     await bridgeRun({ operation: "complete", ...base, snapshot: completed }, send, controllerId);
     expect(service.list()[0]!.turns).toHaveLength(2);
-    expect(service.list()[0]!.turns[1]!.prompt).toContain("Implementation and test evidence");
+    expect(service.list()[0]!.turns[1]!.prompt).toBe(answer(0));
   });
 });
 
