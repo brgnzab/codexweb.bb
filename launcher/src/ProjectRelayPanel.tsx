@@ -19,6 +19,30 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : S
 const blankDraft = (): ProjectRelayDraft => ({ name: "", task: "", peers: [{ name: "First participant", kind: "gw", conversation: "" }, { name: "Second participant", kind: "codex", conversation: "" }], maxTurns: 20 });
 const copyDraft = (draft: ProjectRelayDraft): ProjectRelayDraft => ({ ...draft, peers: draft.peers.map(peer => ({ ...peer })) as [Peer, Peer] });
 let savedDraft = blankDraft();
+
+function relayConversationUrl(value: string): string {
+  let url: URL;
+  try { url = new URL(value); }
+  catch { throw new Error("Open an existing ChatGPT conversation first"); }
+  if (url.protocol !== "https:" || url.hostname !== "chatgpt.com" || url.username || url.password || url.search || url.hash || !/^\/c\/[A-Za-z0-9_-]+$/.test(url.pathname)) {
+    throw new Error("Open an existing ChatGPT conversation first");
+  }
+  return url.toString();
+}
+export function canAssignProjectRelayConversation(value?: string): boolean {
+  if (!value) return false;
+  try { relayConversationUrl(value); return true; }
+  catch { return false; }
+}
+export function assignProjectRelayParticipant(index: 0 | 1, conversation: string): string {
+  const url = relayConversationUrl(conversation);
+  savedDraft = {
+    ...savedDraft,
+    peers: savedDraft.peers.map((peer, i) => i === index ? { ...peer, kind: "gw", conversation: url } : { ...peer }) as [Peer, Peer],
+  };
+  return url;
+}
+
 const participantLabel = (peer: number) => peer === 0 ? "First" : "Second";
 const recoverableRelay = (relay: ProjectRelayView) => relay.state !== "running" && relay.state !== "uat-ready";
 const stoppableRelay = (relay: ProjectRelayView) => relay.state === "running" || relay.state === "blocked";
