@@ -12,4 +12,7 @@
 .project-relay code { overflow-wrap: anywhere; }
 .relay-error { color: #ffb4aa; }
 .relay-safety-note { color: #f3b65a; font-size: 12px; }
-@media (max-width: 800px) { .relay-peers { grid-template-columns: 1fr; } }
+.relay-chat-assign { display: flex; align-items: center; gap: 4px; }
+.relay-chat-assign select { height: 30px; min-width: 106px; padding: 0 8px; border: 1px solid #3a3a3a; border-radius: 7px; background: #272727; color: #d0d0d0; font-size: 11px; }
+.relay-chat-assign button { white-space: nowrap; }
+@media (max-width: 800px) { .relay-peers { grid-template-columns: 1fr; } .relay-chat-assign button { max-width: 90px; overflow: hidden; text-overflow: ellipsis; } }
