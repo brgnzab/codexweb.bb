@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
-import { readLauncherBrowserHostDescriptor } from "../launcher-browser-host";
+import { readLauncherBrowserHostDescriptor, verifyLauncherHelperIntegrity } from "../launcher-browser-host";
 import type {
   CouncilExecutionObservation,
   CouncilPersistentChatDriver,
@@ -242,6 +242,7 @@ export class NodePlaywrightCouncilChatDriver implements CouncilPersistentChatDri
     if (input.signal?.aborted) throw new DOMException("Council ChatGPT turn aborted", "AbortError");
     const descriptor = readLauncherBrowserHostDescriptor(this.descriptorPath);
     const id = `councilhelper_${randomUUID().replaceAll("-", "")}`;
+    verifyLauncherHelperIntegrity(descriptor);
     const child = spawn(descriptor.helper.executable, [descriptor.helper.script], {
       env: {
         ...process.env,

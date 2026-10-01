@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { protectPrivatePath } from "../launcher/electron/private-path.cjs";
 import { afterEach, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -27,19 +29,23 @@ function descriptorFile(controlEndpoint = "http://127.0.0.1:39111"): string {
     kind: LAUNCHER_BROWSER_HOST_KIND,
     pid: process.pid,
     endpoint: "http://127.0.0.1:39110",
+    automationToken: "a".repeat(43),
     control: {
       endpoint: controlEndpoint,
       token: "launcher-control-token-0123456789abcdefghijklmnop",
     },
     helper: {
       executable: process.execPath,
+      executableHash: createHash("sha256").update(readFileSync(process.execPath)).digest("hex"),
       script: import.meta.path,
+      scriptHash: createHash("sha256").update(readFileSync(import.meta.path)).digest("hex"),
     },
     partition: "persist:codex-web-gpt-chatgpt",
     idleUrl: "about:blank#codex-web-gpt-browser-host",
     surfaceId: "launcher_surface_id_0123456789AB",
     createdAt: new Date().toISOString(),
   })}\n`, { mode: 0o600 });
+  protectPrivatePath(path);
   return path;
 }
 
@@ -49,6 +55,7 @@ test("launcher descriptor is owner-only, loopback-only, and process-bound", () =
     kind: LAUNCHER_BROWSER_HOST_KIND,
     pid: process.pid,
     endpoint: "http://127.0.0.1:39110",
+    automationToken: "a".repeat(43),
     surfaceId: "launcher_surface_id_0123456789AB",
   });
   if (process.platform !== "win32") {

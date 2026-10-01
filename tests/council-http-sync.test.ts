@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { startCouncilHttpServer } from "../src/council/http-server";
 import { CouncilStore } from "../src/council/store";
 
+function trustedFetch(url: string) { return fetch(url, { headers: { authorization: "Bearer sync-capability" } }); }
+
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "council-http-sync-"));
   const store = new CouncilStore(join(root, "state.json"));
-  const server = startCouncilHttpServer(store, { port: 0 });
+  const server = startCouncilHttpServer(store, { port: 0, owner: { token: () => "sync-capability", startLead: async () => ({}), focusAgent: async () => ({}) } });
   if (!server || typeof server.port !== "number") throw new Error("Council sync test server failed to start");
   return { root, store, server, base: `http://127.0.0.1:${server.port}` };
 }
@@ -26,7 +28,7 @@ describe("Council canonical sync contract", () => {
       value.store.ensureRoom({ id: "project", name: "Project", mission: "Ship vNext" });
       value.store.say({ roomId: "project", authorAgentId: "alice", body: "Canonical state is live" });
 
-      const response = await fetch(`${value.base}/api/sync/snapshot`);
+      const response = await trustedFetch(`${value.base}/api/sync/snapshot`);
       expect(response.status).toBe(200);
       const body = await response.json() as any;
       expect(body.schemaVersion).toBe(1);
@@ -47,7 +49,7 @@ describe("Council canonical sync contract", () => {
       const wake = value.store.wake({ targetAgentId: "alice", roomId: "project", reason: "legacy delivery" });
       value.store.updateWake(wake.id, "delivering");
 
-      const response = await fetch(`${value.base}/api/sync/snapshot`);
+      const response = await trustedFetch(`${value.base}/api/sync/snapshot`);
       const body = await response.json() as any;
       const projected = body.state.wakes.find((item: any) => item.id === wake.id);
       expect(projected.status).toBe("target-running");
@@ -58,13 +60,13 @@ describe("Council canonical sync contract", () => {
   test("changes the opaque cursor when canonical Council state mutates", async () => {
     const value = fixture();
     try {
-      const first = await fetch(`${value.base}/api/sync/snapshot`);
+      const first = await trustedFetch(`${value.base}/api/sync/snapshot`);
       expect(first.status).toBe(200);
       const before = await first.json() as any;
 
       value.store.joinAgent({ id: "alice", name: "Alice", role: "Architect" });
 
-      const second = await fetch(`${value.base}/api/sync/snapshot`);
+      const second = await trustedFetch(`${value.base}/api/sync/snapshot`);
       expect(second.status).toBe(200);
       const after = await second.json() as any;
       expect(after.cursor).not.toBe(before.cursor);
@@ -75,7 +77,7 @@ describe("Council canonical sync contract", () => {
   test("rejects an invalid or foreign continuation cursor with typed RESYNC_REQUIRED", async () => {
     const value = fixture();
     try {
-      const response = await fetch(`${value.base}/api/sync/next?after=foreign-cursor&wait_ms=1`);
+      const response = await trustedFetch(`${value.base}/api/sync/next?after=foreign-cursor&wait_ms=1`);
       expect(response.status).toBe(409);
       const body = await response.json() as any;
       expect(body).toEqual({

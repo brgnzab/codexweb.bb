@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { verifyRuntimeContent } = require("./runtime-integrity.cjs");
 
 function runtimeBundlePaths(runtimeRoot, platform = process.platform) {
   return {
@@ -23,7 +24,7 @@ function sourceRuntimeInvocation(sourceRoot, args) {
   };
 }
 
-function runtimeInvocation({ app, sourceRoot, installedRuntimeRoot, args }) {
+function runtimeInvocation({ app, sourceRoot, installedRuntimeRoot, args, trustedManifestHash }) {
   if (!Array.isArray(args)) throw new Error("Runtime arguments must be an array");
   if (!app.isPackaged) return sourceRuntimeInvocation(sourceRoot, args);
 
@@ -31,6 +32,7 @@ function runtimeInvocation({ app, sourceRoot, installedRuntimeRoot, args }) {
     throw new Error("Packaged launcher runtime has not been installed into durable local storage");
   }
   const { runtimeRoot, executable, entrypoint } = runtimeBundlePaths(installedRuntimeRoot);
+  verifyRuntimeContent(runtimeRoot, trustedManifestHash || require("./runtime-trust.json").manifestHash);
   if (!fs.existsSync(executable)) throw new Error(`Bundled Bun runtime is missing: ${executable}`);
   if (!fs.existsSync(entrypoint)) throw new Error(`Bundled runtime entrypoint is missing: ${entrypoint}`);
   return {
@@ -40,10 +42,11 @@ function runtimeInvocation({ app, sourceRoot, installedRuntimeRoot, args }) {
   };
 }
 
-function embeddedRuntimeInvocation({ app, sourceRoot, args }) {
+function embeddedRuntimeInvocation({ app, sourceRoot, args, trustedManifestHash }) {
   if (!Array.isArray(args)) throw new Error("Runtime arguments must be an array");
   if (!app.isPackaged) return sourceRuntimeInvocation(sourceRoot, args);
   const { runtimeRoot, executable, entrypoint } = packagedRuntimePaths(process.resourcesPath);
+  verifyRuntimeContent(runtimeRoot, trustedManifestHash || require("./runtime-trust.json").manifestHash);
   if (!fs.existsSync(executable)) throw new Error(`Embedded Bun runtime is missing: ${executable}`);
   if (!fs.existsSync(entrypoint)) throw new Error(`Embedded runtime entrypoint is missing: ${entrypoint}`);
   return {

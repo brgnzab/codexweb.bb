@@ -1,8 +1,10 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { expandUserPath } from "./config";
 import { processRunning } from "./process";
+import { assertNoReparsePath, verifyPrivatePath } from "../launcher/electron/private-path.cjs";
 
 export const LAUNCHER_BROWSER_HOST_KIND = "codex-web-gpt-launcher";
 
@@ -11,6 +13,7 @@ export interface LauncherBrowserHostDescriptor {
   kind: typeof LAUNCHER_BROWSER_HOST_KIND;
   pid: number;
   endpoint: string;
+  automationToken: string;
   control: {
     endpoint: string;
     token: string;
@@ -18,6 +21,8 @@ export interface LauncherBrowserHostDescriptor {
   helper: {
     executable: string;
     script: string;
+    executableHash: string;
+    scriptHash: string;
   };
   partition: string;
   idleUrl: string;
@@ -58,6 +63,9 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     throw new Error("Launcher browser descriptor has an invalid pid");
   }
   const endpoint = assertLoopbackEndpoint(descriptor.endpoint, "Launcher CDP endpoint");
+  if (typeof descriptor.automationToken !== "string" || !/^[A-Za-z0-9_-]{40,}$/.test(descriptor.automationToken)) {
+    throw new Error("Launcher browser descriptor is missing its private automation capability");
+  }
   if (!descriptor.control || typeof descriptor.control !== "object") {
     throw new Error("Launcher browser descriptor is missing its control channel");
   }
@@ -76,6 +84,9 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   if (!helperScript || !existsSync(helperScript)) {
     throw new Error("Launcher browser descriptor helper script does not exist");
   }
+  if (![descriptor.helper.executableHash, descriptor.helper.scriptHash].every(value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value))) {
+    throw new Error("Launcher browser helper integrity reference is missing");
+  }
   if (descriptor.partition !== "persist:codex-web-gpt-chatgpt") {
     throw new Error("Launcher browser descriptor identifies an unexpected browser partition");
   }
@@ -93,8 +104,9 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     kind: LAUNCHER_BROWSER_HOST_KIND,
     pid: descriptor.pid!,
     endpoint,
+    automationToken: descriptor.automationToken,
     control: { endpoint: controlEndpoint, token: descriptor.control.token },
-    helper: { executable: helperExecutable, script: helperScript },
+    helper: { executable: helperExecutable, script: helperScript, executableHash: descriptor.helper.executableHash, scriptHash: descriptor.helper.scriptHash },
     partition: descriptor.partition,
     idleUrl: descriptor.idleUrl,
     surfaceId: descriptor.surfaceId,
@@ -102,11 +114,20 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   };
 }
 
+export function verifyLauncherHelperIntegrity(descriptor: LauncherBrowserHostDescriptor): void {
+  for (const [file, expected] of [[descriptor.helper.executable, descriptor.helper.executableHash], [descriptor.helper.script, descriptor.helper.scriptHash]]) {
+    assertNoReparsePath(file!);
+    const actual = createHash("sha256").update(readFileSync(file!)).digest("hex");
+    if (actual !== expected) throw new Error("Launcher browser helper content integrity mismatch");
+  }
+}
+
 export function readLauncherBrowserHostDescriptor(configuredPath: string): LauncherBrowserHostDescriptor {
   const path = resolve(expandUserPath(configuredPath));
   if (!existsSync(path)) throw new Error(`Launcher browser host is unavailable: descriptor is missing at ${path}`);
   const stat = statSync(path);
   if (!stat.isFile()) throw new Error(`Launcher browser descriptor is not a regular file: ${path}`);
+  verifyPrivatePath(path);
   if (process.platform !== "win32") {
     if ((stat.mode & 0o077) !== 0) throw new Error(`Launcher browser descriptor has unsafe permissions: ${path}`);
     const getuid = process.getuid;
@@ -130,7 +151,7 @@ async function assertCdpReady(descriptor: LauncherBrowserHostDescriptor, timeout
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${descriptor.endpoint}/json/version`, { signal: controller.signal });
+    const response = await fetch(`${descriptor.endpoint}/json/version`, { headers: { authorization: `Bearer ${descriptor.automationToken}` }, signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const body = await response.json() as Record<string, unknown>;
     if (typeof body.webSocketDebuggerUrl !== "string" || !body.webSocketDebuggerUrl.startsWith("ws://127.0.0.1:")) {
@@ -188,7 +209,8 @@ export async function connectLauncherBrowserHost(
   await assertCdpReady(descriptor, Math.min(timeoutMs, 5_000));
   let browser: Browser;
   try {
-    browser = await chromium.connectOverCDP(descriptor.endpoint, { timeout: timeoutMs });
+    browser = await chromium.connectOverCDP(descriptor.endpoint, { timeout: timeoutMs,
+      headers: { authorization: `Bearer ${descriptor.automationToken}`, "x-cwc-surface": surfaceId ?? descriptor.surfaceId } });
   } catch (error) {
     throw new Error(`Could not connect Playwright to the launcher browser: ${error instanceof Error ? error.message : String(error)}`);
   }

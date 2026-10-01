@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { VERSION } from "../src/version";
+import { sealRuntimeManifest } from "../launcher/electron/runtime-integrity.cjs";
 
 const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
@@ -133,3 +134,4 @@ writeFileSync(join(output, "manifest.json"), `${JSON.stringify({
 }, null, 2)}\n`);
 
 process.stdout.write(`${output}\n`);
+sealRuntimeManifest(output, JSON.parse(readFileSync(join(output, "manifest.json"), "utf8")));

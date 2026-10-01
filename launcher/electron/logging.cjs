@@ -1,20 +1,32 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { renameAtomicFile } = require("./atomic-file.cjs");
+const { ensurePrivateDirectory } = require("./private-path.cjs");
 
 const MAX_LOG_BYTES = 4 * 1024 * 1024;
 const MAX_MEMORY_RECORDS = 300;
 const MAX_LOG_STRING_CHARS = 16 * 1024;
 
 function redactText(value) {
+  // Serialized diagnostics are data, not prose. Sanitize their keys recursively.
+  const trimmed = value.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith('"')) {
+    try { return JSON.stringify(sanitize(JSON.parse(trimmed))); } catch {}
+  }
   const redacted = value
+    .replace(/https?:\/\/[^\s<>"']+/gi, url => {
+      try { const parsed = new URL(url); return `${parsed.origin}${parsed.pathname}`; }
+      catch { return "[url-redacted]"; }
+    })
+    // Suppress embedded/escaped serialized payloads; the logger has no safe schema for them.
+    .replace(/\{[\s\S]*\}/g, "[serialized-diagnostic]")
     .replace(/tunnel_[a-f0-9]{32}/g, "[tunnel-id]")
     .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, "[runtime-key]")
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[github-token]")
     .replace(/\b(Authorization|Proxy-Authorization|X-Api-Key)\s*:\s*[^\r\n]+/gi, "$1: [redacted]")
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{20,}\b/gi, "Bearer [redacted]")
     .replace(/\b(Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi, "$1: [redacted]")
-    .replace(/\b(access_token|refresh_token|api[_-]?key|token|password|secret|session(?:[_-]?(?:id|key|token))?|csrf(?:[_-]?token)?|xsrf(?:[_-]?token)?)=([^&\s]+)/gi, "$1=[redacted]")
+    .replace(/\b(code|state|access_token|refresh_token|api[_-]?key|token|password|secret|session(?:[_-]?(?:id|key|token))?|csrf(?:[_-]?token)?|xsrf(?:[_-]?token)?)=([^&\s]+)/gi, "$1=[redacted]")
     .replace(/\b(session(?:[_-]?(?:id|key|token))?|csrf(?:[_-]?token)?|xsrf(?:[_-]?token)?)\s*:\s*([^\s,;}]+)/gi, "$1: [redacted]")
     .replace(/\bhttps?:\/\/[^/\s:@]+:[^@\s/]+@/gi, "https://[credentials-redacted]@");
   return redacted.length > MAX_LOG_STRING_CHARS
@@ -25,6 +37,8 @@ function redactText(value) {
 function sensitiveKey(key) {
   const normalized = String(key).replace(/[^A-Za-z0-9]/g, "").toLowerCase();
   return normalized === "authorization"
+    || normalized === "code"
+    || normalized === "state"
     || normalized === "proxyauthorization"
     || normalized === "cookie"
     || normalized === "setcookie"
@@ -92,6 +106,7 @@ function readRecent(filePath) {
 }
 
 function createLogger({ filePath, publish }) {
+  ensurePrivateDirectory(path.dirname(filePath), { recursive: true });
   const records = readRecent(filePath);
 
   const append = (level, event, detail = {}) => {
@@ -127,6 +142,7 @@ function createLogger({ filePath, publish }) {
 }
 
 function installProcessDiagnosticGuards({ filePath, streams = [process.stdout, process.stderr] }) {
+  ensurePrivateDirectory(path.dirname(filePath));
   const guarded = new Set();
   for (const stream of streams) {
     if (!stream || typeof stream.on !== "function" || guarded.has(stream)) continue;
@@ -147,9 +163,10 @@ function installProcessDiagnosticGuards({ filePath, streams = [process.stdout, p
   }
 }
 
-function registerLoggedIpc(ipcMain, logger, channel, handler) {
+function registerLoggedIpc(ipcMain, logger, channel, handler, validateSender) {
   ipcMain.handle(channel, async (event, ...args) => {
     try {
+      if (typeof validateSender !== "function" || !validateSender(event)) throw new Error("Untrusted launcher IPC sender");
       return await handler(event, ...args);
     } catch (error) {
       logger.error("launcher.ipc_failed", {

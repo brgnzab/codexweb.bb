@@ -1,7 +1,7 @@
 const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const { onCouncilRuntimeLiveChanged } = require("./council-runtime-evidence.cjs");
-const { ownerDescriptorPath } = require("./council-owner-client.cjs");
+const { ownerDescriptorPath, readOwnerDescriptor } = require("./council-owner-client.cjs");
 
 const DEFAULT_PORT = 17_842;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
@@ -110,12 +110,17 @@ function createCouncilSyncClient(options = {}) {
     throw new Error("Council sync endpoint must be a plain loopback origin");
   }
   const origin = parsed.origin;
+  const authorization = () => {
+    const descriptor = (options.readOwnerDescriptor || readOwnerDescriptor)();
+    if (new URL(descriptor.endpoint).origin !== origin) throw new Error("Council sync capability endpoint mismatch");
+    return { authorization: `Bearer ${descriptor.token}` };
+  };
   const requestTimeoutMs = Number.isFinite(options.requestTimeoutMs) ? Math.max(250, Math.trunc(options.requestTimeoutMs)) : DEFAULT_REQUEST_TIMEOUT_MS;
   const waitMs = Number.isFinite(options.waitMs) ? Math.max(0, Math.min(25_000, Math.trunc(options.waitMs))) : DEFAULT_WAIT_MS;
 
   return {
     async getSnapshot(signal) {
-      const response = await fetchWithDeadline(fetchImpl, `${origin}/api/sync/snapshot`, { method: "GET", signal }, requestTimeoutMs);
+      const response = await fetchWithDeadline(fetchImpl, `${origin}/api/sync/snapshot`, { method: "GET", headers: authorization(), signal }, requestTimeoutMs);
       if (!response.ok) throw new Error(`Council sync snapshot HTTP ${response.status}`);
       return validateSnapshotEnvelope(await response.json());
     },
@@ -124,7 +129,7 @@ function createCouncilSyncClient(options = {}) {
       const url = new URL(`${origin}/api/sync/next`);
       url.searchParams.set("after", after);
       url.searchParams.set("wait_ms", String(waitMs));
-      const response = await fetchWithDeadline(fetchImpl, url.toString(), { method: "GET", signal }, Math.max(requestTimeoutMs, waitMs + 5_000));
+      const response = await fetchWithDeadline(fetchImpl, url.toString(), { method: "GET", headers: authorization(), signal }, Math.max(requestTimeoutMs, waitMs + 5_000));
       if (response.status === 204) return { type: "idle" };
       const value = await response.json().catch(() => ({}));
       if (response.status === 409 && value?.type === "resync-required" && value?.reason?.code === "RESYNC_REQUIRED") return { type: "resync-required" };

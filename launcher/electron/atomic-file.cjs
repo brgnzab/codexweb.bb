@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { assertNoReparsePath, ensurePrivateDirectory, protectPrivatePath } = require("./private-path.cjs");
 
 let sequence = 0;
 const waitCell = new Int32Array(new SharedArrayBuffer(4));
@@ -34,12 +35,14 @@ function renameAtomicFile(
 
 function writePrivateFileAtomic(filePath, content) {
   const directory = path.dirname(filePath);
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  assertNoReparsePath(filePath);
+  ensurePrivateDirectory(directory);
   try { fs.chmodSync(directory, 0o700); } catch {}
   const temporary = `${filePath}.tmp-${process.pid}-${Date.now()}-${++sequence}`;
   try {
     fs.writeFileSync(temporary, content, { flag: "wx", mode: 0o600 });
     renameAtomicFile(temporary, filePath);
+    protectPrivatePath(filePath);
     try { fs.chmodSync(filePath, 0o600); } catch {}
   } finally {
     fs.rmSync(temporary, { force: true });

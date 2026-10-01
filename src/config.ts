@@ -5,6 +5,7 @@ import { basename, delimiter, dirname, isAbsolute, join, resolve, sep, win32 } f
 import { tmpdir } from "node:os";
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
+import { assertNoReparsePath, ensurePrivateDirectory, protectPrivatePath } from "../launcher/electron/private-path.cjs";
 
 export type RuntimeMode = "browser-only" | "full";
 export type BrowserHostMode = "managed-chrome" | "launcher";
@@ -124,7 +125,8 @@ function renameAtomicFile(source: string, destination: string): void {
 
 export function atomicWriteFile(path: string, data: string | Uint8Array): void {
   const directory = dirname(path);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  assertNoReparsePath(path);
+  ensurePrivateDirectory(directory);
   try { chmodSync(directory, 0o700); } catch { /* Windows ACLs are managed by the installer. */ }
   const temp = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
   const fd = openSync(temp, "wx", 0o600);
@@ -132,6 +134,7 @@ export function atomicWriteFile(path: string, data: string | Uint8Array): void {
     writeFileSync(fd, data);
     closeSync(fd);
     renameAtomicFile(temp, path);
+    protectPrivatePath(path);
   } catch (error) {
     try { closeSync(fd); } catch {}
     rmSync(temp, { force: true });
@@ -280,12 +283,14 @@ export function defaultChromeExecutable(
 }
 
 export function loadConfig(): AppConfig {
+  ensurePrivateDirectory(getConfigDir(), { recursive: true });
   const path = getConfigPath();
   if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run codex-chatgpt-web setup first.`);
   return parseConfig(JSON.parse(readFileSync(path, "utf8")), path);
 }
 
 export function loadConfigForSetup(): AppConfig {
+  ensurePrivateDirectory(getConfigDir(), { recursive: true });
   const path = getConfigPath();
   if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run codex-chatgpt-web setup first.`);
   const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;

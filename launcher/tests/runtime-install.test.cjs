@@ -4,7 +4,10 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { runtimeInvocation } = require("../electron/runtime-command.cjs");
-const { ensurePackagedRuntime } = require("../electron/runtime-install.cjs");
+const { ensurePackagedRuntime: installRuntime } = require("../electron/runtime-install.cjs");
+const { sealRuntimeManifest } = require("../electron/runtime-integrity.cjs");
+const trustedHash = resources => fs.readFileSync(path.join(resources, "test-trust"), "utf8");
+const ensurePackagedRuntime = options => installRuntime({ ...options, trustedManifestHash: trustedHash(options.resourcesPath) });
 
 function runtimeFixture(root, version = "0.2.0", bundleId = "a".repeat(64)) {
   const source = path.join(root, "resources", "runtime");
@@ -22,6 +25,8 @@ function runtimeFixture(root, version = "0.2.0", bundleId = "a".repeat(64)) {
     platform: process.platform,
     arch: process.arch,
   })}\n`);
+  const { manifestHash } = sealRuntimeManifest(source, { appVersion: version, platform: process.platform, arch: process.arch });
+  fs.writeFileSync(path.join(root, "resources", "test-trust"), manifestHash);
   return path.join(root, "resources");
 }
 
@@ -40,6 +45,7 @@ test("packaged runtime is installed once into a durable versioned directory", ()
       app,
       sourceRoot: root,
       installedRuntimeRoot: installed,
+      trustedManifestHash: trustedHash(resourcesPath),
       args: ["mcp"],
     });
     assert.equal(invocation.cwd, installed);
@@ -104,6 +110,8 @@ test("packaged runtime replaces stale files when a release is refreshed under th
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
     fs.writeFileSync(path.join(source, "app", "cli.js"), "new cli");
     fs.writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, bundleId: "b".repeat(64) })}\n`);
+    const { manifestHash } = sealRuntimeManifest(source, { appVersion: "0.2.0", platform: process.platform, arch: process.arch });
+    fs.writeFileSync(path.join(resourcesPath, "test-trust"), manifestHash);
 
     assert.equal(ensurePackagedRuntime({ app, coreHome, resourcesPath }), installed);
     assert.equal(fs.readFileSync(path.join(installed, "app", "cli.js"), "utf8"), "new cli");

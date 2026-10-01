@@ -24,6 +24,8 @@ references/
 launcher/build/
 launcher/release/
 launcher/artifacts/
+launcher/electron/runtime-trust.json
+.dev-tools/
 
 # CWC Personal private runtime/session state. These paths are never source inputs.
 .cwc-data/

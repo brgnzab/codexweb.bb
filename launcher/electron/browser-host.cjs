@@ -153,6 +153,7 @@ class BrowserHost {
     window,
     descriptorPath,
     cdpPort,
+    automation,
     control,
     getConnectorName,
     helper,
@@ -165,6 +166,7 @@ class BrowserHost {
     this.window = window;
     this.descriptorPath = descriptorPath;
     this.cdpPort = cdpPort;
+    this.automation = automation;
     this.control = control;
     this.getConnectorName = getConnectorName;
     this.helper = helper;
@@ -1409,7 +1411,8 @@ class BrowserHost {
       version: 1,
       kind: "codex-web-gpt-launcher",
       pid: process.pid,
-      endpoint: `http://127.0.0.1:${this.cdpPort}`,
+      endpoint: this.automation?.endpoint || `http://127.0.0.1:${this.cdpPort}`,
+      automationToken: this.automation?.token,
       control: this.control,
       helper: this.helper,
       partition: "persist:codex-web-gpt-chatgpt",

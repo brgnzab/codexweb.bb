@@ -119,12 +119,8 @@ export function buildCouncilPublicSnapshot(store: CouncilStore, managed: Council
 
 function allowedRendererOrigin(request: Request): string | undefined {
   const origin = request.headers.get("origin");
-  if (origin === "null") return "null";
   if (!origin) return undefined;
-  try {
-    const url = new URL(origin);
-    if ((url.protocol === "http:" || url.protocol === "https:") && (url.hostname === "127.0.0.1" || url.hostname === "localhost")) return origin;
-  } catch {}
+  // Council projection is fetched by Electron main, never directly by a web renderer.
   return undefined;
 }
 
@@ -286,8 +282,11 @@ export function startCouncilHttpServer(
     return Bun.serve({
       hostname: COUNCIL_HTTP_HOST,
       port,
-      async fetch(request) {
+      async fetch(request, server) {
         const url = new URL(request.url);
+        if (url.hostname !== COUNCIL_HTTP_HOST || request.headers.get("host") !== `${COUNCIL_HTTP_HOST}:${server.port}`) {
+          return new Response("Forbidden host", { status: 403, headers: responseHeaders() });
+        }
 
         if (url.pathname.startsWith("/api/owner/")) {
           if (request.headers.has("origin")) return new Response("Forbidden origin", { status: 403, headers: responseHeaders(undefined, "text/plain; charset=utf-8") });
@@ -410,6 +409,9 @@ export function startCouncilHttpServer(
         const origin = allowedRendererOrigin(request);
         const suppliedOrigin = request.headers.has("origin");
         if (suppliedOrigin && !origin) return new Response("Forbidden origin", { status: 403, headers: responseHeaders(undefined, "text/plain; charset=utf-8") });
+        if (url.pathname.startsWith("/api/") && !ownerAuthorized(request)) {
+          return new Response("Unauthorized", { status: 401, headers: responseHeaders() });
+        }
         if (request.method === "OPTIONS") {
           if (!origin) return new Response("Forbidden origin", { status: 403, headers: responseHeaders(undefined, "text/plain; charset=utf-8") });
           return new Response(null, { status: 204, headers: { ...responseHeaders(origin), "access-control-allow-methods": "GET, OPTIONS", "access-control-allow-headers": "content-type" } });

@@ -72,9 +72,8 @@ test("launcher log text redacts auth headers, cookies, URL credentials, session 
     "colon-session",
     "private-xsrf",
   ]) assert.doesNotMatch(value, new RegExp(secret));
-  assert.match(value, /access_token=\[redacted\]/);
-  assert.match(value, /session_id=\[redacted\]/);
-  assert.match(value, /csrf_token=\[redacted\]/);
+  assert.match(value, /https:\/\/example.invalid\/path/);
+  assert.doesNotMatch(value, /[?#]/);
   assert.match(value, /Cookie: \[redacted\]/);
   assert.match(value, /Authorization: \[redacted\]/);
   assert.match(value, /X-Api-Key: \[redacted\]/);
@@ -115,6 +114,7 @@ test("failed launcher IPC calls are written to runtime activity", async () => {
     async () => {
       throw new Error("visible failure");
     },
+    () => true,
   );
 
   await assert.rejects(registered.handler({}, 1), /visible failure/);

@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { verifyPrivatePath } = require("./private-path.cjs");
 
 const OWNER_REQUEST_TIMEOUT_MS = 8_000;
 const OWNER_LONG_REQUEST_TIMEOUT_MS = 20 * 60_000;
@@ -29,6 +30,7 @@ function readOwnerDescriptor() {
   const descriptorPath = ownerDescriptorPath();
   let raw;
   try {
+    verifyPrivatePath(descriptorPath);
     raw = fs.readFileSync(descriptorPath, "utf8");
   } catch (error) {
     if (error?.code === "ENOENT") throw runtimeUnavailableError();

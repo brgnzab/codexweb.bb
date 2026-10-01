@@ -13,7 +13,7 @@ renameSync(firstLocation, runtimeRoot);
 
 try {
   const manifest = JSON.parse(readFileSync(join(runtimeRoot, "manifest.json"), "utf8")) as Record<string, unknown>;
-  if (manifest.schemaVersion !== 1
+  if (manifest.schemaVersion !== 2
     || manifest.appVersion !== VERSION
     || manifest.playwright !== "1.62.0"
     || !/^[a-f0-9]{64}$/.test(String(manifest.bundleId ?? ""))) {

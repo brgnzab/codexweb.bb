@@ -1,6 +1,7 @@
 const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const { sealRuntimeManifest } = require("../electron/runtime-integrity.cjs");
 
 const launcherRoot = path.resolve(__dirname, "..");
 const repositoryRoot = path.resolve(launcherRoot, "..");
@@ -30,6 +31,9 @@ if (notices.error) throw notices.error;
 if (notices.status !== 0) process.exit(notices.status ?? 1);
 fs.copyFileSync(path.join(repositoryRoot, "LICENSE"), path.join(output, "LICENSE"));
 fs.cpSync(path.join(repositoryRoot, "LICENSES"), path.join(output, "LICENSES"), { recursive: true });
+const identity = JSON.parse(fs.readFileSync(path.join(output, "manifest.json"), "utf8"));
+const { manifestHash } = sealRuntimeManifest(output, identity);
+fs.writeFileSync(path.join(launcherRoot, "electron", "runtime-trust.json"), `${JSON.stringify({ manifestHash })}\n`);
 
 const hygienePaths = [
   path.join(launcherRoot, "electron"),

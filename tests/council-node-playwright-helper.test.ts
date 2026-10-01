@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { protectPrivatePath } from "../launcher/electron/private-path.cjs";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -49,16 +51,18 @@ function fixture(mode: "success" | "conversation-missing" | "delayed-success" = 
     kind: LAUNCHER_BROWSER_HOST_KIND,
     pid: process.pid,
     endpoint: "http://127.0.0.1:39001",
+    automationToken: "a".repeat(43),
     control: {
       endpoint: "http://127.0.0.1:39002",
       token: "launcher-control-token-0123456789abcdefghijklmnop",
     },
-    helper: { executable: process.execPath, script: helper },
+    helper: { executable: process.execPath, script: helper, executableHash: createHash("sha256").update(readFileSync(process.execPath)).digest("hex"), scriptHash: createHash("sha256").update(readFileSync(helper)).digest("hex") },
     partition: "persist:codex-web-gpt-chatgpt",
     idleUrl: "about:blank#codex-web-gpt-browser-host",
     surfaceId: "launcher_surface_id_0123456789AB",
     createdAt: new Date().toISOString(),
   })}\n`, { mode: 0o600 });
+  protectPrivatePath(descriptorPath);
   return { descriptorPath, capturePath };
 }
 

@@ -2,12 +2,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { renameAtomicFile } = require("./atomic-file.cjs");
 const { runtimeBundlePaths } = require("./runtime-command.cjs");
+const { verifyRuntimeContent } = require("./runtime-integrity.cjs");
+const { ensurePrivateDirectory, protectPrivatePath } = require("./private-path.cjs");
 
-function validateRuntimeBundle(runtimeRoot, { version, platform, arch, bundleId }) {
+function validateRuntimeBundle(runtimeRoot, { version, platform, arch, bundleId, manifestHash }) {
   const manifestPath = path.join(runtimeRoot, "manifest.json");
   if (!fs.existsSync(manifestPath)) throw new Error(`Runtime manifest is missing: ${manifestPath}`);
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  if (manifest.schemaVersion !== 1
+  const manifest = verifyRuntimeContent(runtimeRoot, manifestHash);
+  if (manifest.schemaVersion !== 2
     || manifest.appVersion !== version
     || manifest.platform !== platform
     || manifest.arch !== arch
@@ -29,12 +31,14 @@ function validateRuntimeBundle(runtimeRoot, { version, platform, arch, bundleId 
   return paths.runtimeRoot;
 }
 
-function ensurePackagedRuntime({ app, coreHome, resourcesPath }) {
+function ensurePackagedRuntime({ app, coreHome, resourcesPath, trustedManifestHash }) {
   if (!app.isPackaged) return null;
   const identity = {
     version: app.getVersion(),
     platform: process.platform,
     arch: process.arch,
+    // This build reference is inside application code/ASAR, not beside the writable runtime.
+    manifestHash: trustedManifestHash || require("./runtime-trust.json").manifestHash,
   };
   const source = path.join(resourcesPath, "runtime");
   validateRuntimeBundle(source, identity);
@@ -54,12 +58,13 @@ function ensurePackagedRuntime({ app, coreHome, resourcesPath }) {
     }
   }
 
-  fs.mkdirSync(versionsRoot, { recursive: true, mode: 0o700 });
+  ensurePrivateDirectory(versionsRoot, { recursive: true });
   const temporary = `${destination}.tmp-${process.pid}-${Date.now()}`;
   const previous = `${destination}.previous-${process.pid}-${Date.now()}`;
   let previousMoved = false;
   try {
     fs.cpSync(source, temporary, { recursive: true, errorOnExist: true, force: false });
+    protectPrivatePath(temporary, { recursive: true });
     validateRuntimeBundle(temporary, expectedIdentity);
     if (fs.existsSync(destination)) {
       renameAtomicFile(destination, previous);

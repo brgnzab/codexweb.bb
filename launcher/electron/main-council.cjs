@@ -1,7 +1,6 @@
 process.env.CODEXWEB_COUNCIL_PRODUCT = "1";
 
 const fs = require("node:fs");
-const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
@@ -17,7 +16,14 @@ const {
   screen,
   shell,
   Tray,
+  protocol,
+  net: electronNet,
 } = require("electron");
+const { ensurePrivateDirectory } = require("./private-path.cjs");
+const { DebuggerTransport } = require("./debugger-transport.cjs");
+const { sha256 } = require("./runtime-integrity.cjs");
+const { trustedLauncherSender, installRendererCsp, rendererCsp } = require("./renderer-security.cjs");
+protocol.registerSchemesAsPrivileged([{ scheme: "cwc-app", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const browserHostModule = require("./browser-host.cjs");
 const controlServerModule = require("./control-server.cjs");
 const { createCouncilBrowserHostClass } = require("./council-browser-host.cjs");
@@ -58,7 +64,7 @@ const {
   supervisorStatus,
 } = require("./council-owner-client.cjs");
 const { getAutostart, setAutostart } = require("./autostart.cjs");
-const { createLogger, installProcessDiagnosticGuards, registerLoggedIpc } = require("./logging.cjs");
+const { createLogger, installProcessDiagnosticGuards, registerLoggedIpc, redactText } = require("./logging.cjs");
 const { RuntimeHost, COUNCIL_CONNECTOR_NAME } = require("./runtime.cjs");
 const { ensurePackagedRuntime } = require("./runtime-install.cjs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
@@ -88,7 +94,7 @@ const CONNECTORS_URL = "https://chatgpt.com/#settings/Plugins";
 const TUNNELS_URL = "https://platform.openai.com/settings/organization/tunnels";
 const KEYS_URL = "https://platform.openai.com/settings/organization/api-keys";
 const ALLOWED_EXTERNAL_URLS = new Set([GITHUB_URL, CONNECTORS_URL, TUNNELS_URL, KEYS_URL]);
-const PACKAGED_RENDERER_URL = pathToFileURL(path.join(__dirname, "..", "dist", "index.html")).href;
+const PACKAGED_RENDERER_URL = "cwc-app://launcher/index.html";
 const APP_ICON_PATH = path.join(__dirname, "..", "assets", "icon.png");
 
 app.setName("CodexWeb Council");
@@ -97,7 +103,10 @@ if (process.platform === "win32") app.setAppUserModelId("dev.codexwebgpt.launche
 // is build-scoped separately so a newly downloaded/head build starts clean without logging out.
 const configuredUserData = process.env.CODEX_WEB_GPT_LAUNCHER_DATA_DIR?.trim();
 const launcherUserData = configuredUserData ? path.resolve(configuredUserData) : path.join(app.getPath("appData"), "Codex Web GPT");
-fs.mkdirSync(launcherUserData, { recursive: true, mode: 0o700 });
+ensurePrivateDirectory(launcherUserData, { recursive: true });
+ensurePrivateDirectory(CORE_HOME, { recursive: true });
+// The trusted build reference lives inside application resources, separate from mutable data.
+if (app.isPackaged) ensurePrivateDirectory(path.dirname(app.getAppPath()), { recursive: true });
 if (process.platform !== "win32") fs.chmodSync(launcherUserData, 0o700);
 app.setPath("userData", launcherUserData);
 const BUILD_MARKER_PATH = path.join(launcherUserData, "cwc-build.json");
@@ -115,23 +124,12 @@ let smokePassedThisSession = false;
 let quitting = false;
 let shutdownInProgress = false;
 let exitCommitted = false;
-let cdpPort = 0;
+let automationTransport = null;
 
 function send(channel, value) {
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(channel, value);
 }
 function publishOperation(operation) { lastOperation = operation; send("launcher:operation", operation); }
-function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(error => error ? reject(error) : resolve(address && typeof address === "object" ? address.port : 0));
-    });
-  });
-}
 function rendererNavigationAllowed(value) {
   try {
     const target = new URL(value);
@@ -205,7 +203,7 @@ function createTray(logger) {
 
 async function loadRenderer(window) {
   if (isDev) await window.loadURL(process.env.VITE_DEV_SERVER_URL);
-  else await window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+  else await window.loadURL(PACKAGED_RENDERER_URL);
 }
 function validateBounds(value) {
   if (!value || typeof value !== "object") throw new Error("Browser bounds are required");
@@ -285,7 +283,8 @@ async function clearApplicationCache({ stateStore, logger }) {
 }
 
 function registerIpc({ logger, stateStore }) {
-  const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, handler);
+  const validateSender = event => trustedLauncherSender(event, mainWindow, rendererNavigationAllowed);
+  const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, handler, validateSender);
   handle("launcher:snapshot", async () => ({
     state: stateStore.read(), browser: browserHost?.snapshot() ?? null, councilRuntime: councilRuntimeSnapshot(), connectorName: COUNCIL_CONNECTOR_NAME,
     mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false, logs: logger.recent(),
@@ -393,7 +392,7 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:logs", (_event, limit) => logger.recent(limit));
   handle("launcher:open-logs", async () => { const error = await shell.openPath(path.dirname(logger.filePath)); if (error) throw new Error(error); return logger.filePath; });
   handle("launcher:window-state", event => windowStateSnapshot(BrowserWindow.fromWebContents(event.sender)));
-  ipcMain.on("launcher:window-control", (event, action) => { const window = BrowserWindow.fromWebContents(event.sender); if (!window || window.isDestroyed()) return; if (action === "close") window.close(); else if (action === "minimize") window.minimize(); else if (action === "zoom") window.isMaximized() ? window.unmaximize() : window.maximize(); });
+  ipcMain.on("launcher:window-control", (event, action) => { if (!validateSender(event)) return; const window = BrowserWindow.fromWebContents(event.sender); if (!window || window.isDestroyed()) return; if (action === "close") window.close(); else if (action === "minimize") window.minimize(); else if (action === "zoom") window.isMaximized() ? window.unmaximize() : window.maximize(); });
 }
 
 async function requestQuit() {
@@ -407,6 +406,7 @@ async function requestQuit() {
     quitting = true;
     await browserHost?.persistSession();
     browserHost?.destroy();
+    await automationTransport?.close();
     await browserControl?.close();
     exitCommitted = true;
     app.quit();
@@ -417,18 +417,31 @@ async function requestQuit() {
 }
 
 async function start() {
-  cdpPort = await findFreePort();
   if (process.platform === "linux") app.commandLine.appendSwitch("class", "codexweb-council");
-  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
-  app.commandLine.appendSwitch("remote-debugging-port", String(cdpPort));
+  if (app.commandLine.hasSwitch("remote-debugging-port") || app.commandLine.hasSwitch("remote-debugging-pipe")) {
+    throw new Error("Unrestricted Chromium debugging must not be enabled");
+  }
   if (!app.requestSingleInstanceLock()) { app.quit(); return; }
   app.on("second-instance", showMainWindow);
   await app.whenReady();
+  if (!isDev) {
+    const rendererRoot = path.resolve(__dirname, "..", "dist");
+    protocol.handle("cwc-app", async request => {
+      const url = new URL(request.url);
+      const file = path.resolve(rendererRoot, `.${decodeURIComponent(url.pathname)}`);
+      if (url.host !== "launcher" || !file.startsWith(rendererRoot + path.sep)) return new Response(null, { status: 403 });
+      const response = await electronNet.fetch(pathToFileURL(file).href);
+      const headers = new Headers(response.headers);
+      headers.set("Content-Security-Policy", rendererCsp());
+      headers.set("X-Frame-Options", "DENY");
+      return new Response(response.body, { status: response.status, headers });
+    });
+  }
 
   let installedRuntimeRoot = null;
   let runtimeRootResolved = false;
   const runtimeRootProvider = () => {
-    if (!runtimeRootResolved || (app.isPackaged && (!installedRuntimeRoot || !fs.existsSync(installedRuntimeRoot)))) {
+    if (app.isPackaged || !runtimeRootResolved) {
       installedRuntimeRoot = ensurePackagedRuntime({ app, coreHome: CORE_HOME, resourcesPath: process.resourcesPath });
       runtimeRootResolved = true;
     }
@@ -441,6 +454,8 @@ async function start() {
   const startHidden = process.argv.includes("--hidden") && stateStore.read().onboardingComplete;
   nativeTheme.themeSource = "system";
   mainWindow = createWindow({ logger, stateStore, startHidden });
+  if (isDev) installRendererCsp(mainWindow.webContents.session, process.env.VITE_DEV_SERVER_URL, process.env.VITE_DEV_SERVER_URL);
+  automationTransport = await new DebuggerTransport({ getBrowserHost: () => browserHost }).start();
   browserControl = await new BrowserControlServer({ logger, getBrowserHost: () => browserHost, getPreferences: () => stateStore.read() }).start();
   runtimeSupervisor = new RuntimeSupervisor({ app, logger, sourceRoot: SOURCE_ROOT, installedRuntimeRoot, runtimeRootProvider, coreHome: CORE_HOME, browserDescriptorPath: BROWSER_DESCRIPTOR_PATH, publishOperation });
   runtimeHost = new RuntimeHost({ app, logger, sourceRoot: SOURCE_ROOT, installedRuntimeRoot, runtimeRootProvider, browserDescriptorPath: BROWSER_DESCRIPTOR_PATH, publishOperation, supervisor: runtimeSupervisor });
@@ -455,7 +470,8 @@ async function start() {
   }
 
   councilConnectionSupervisor = new CouncilConnectionSupervisor({ logger, capabilities: () => councilCapabilities(stateStore), publish: state => send("launcher:council-runtime", state) });
-  browserHost = new BrowserHost({ window: mainWindow, descriptorPath: BROWSER_DESCRIPTOR_PATH, cdpPort, control: browserControl.descriptor(), getConnectorName: () => COUNCIL_CONNECTOR_NAME, helper: { executable: process.execPath, script: BROWSER_HELPER_PATH }, logger, publishState: state => send("launcher:browser-state", state) });
+  if (app.isPackaged) runtimeRootProvider();
+  browserHost = new BrowserHost({ window: mainWindow, descriptorPath: BROWSER_DESCRIPTOR_PATH, automation: automationTransport.descriptor(), control: browserControl.descriptor(), getConnectorName: () => COUNCIL_CONNECTOR_NAME, helper: { executable: process.execPath, script: BROWSER_HELPER_PATH, executableHash: sha256(fs.readFileSync(process.execPath)), scriptHash: sha256(fs.readFileSync(BROWSER_HELPER_PATH)) }, logger, publishState: state => send("launcher:browser-state", state) });
   await browserHost.ready();
   if (freshBuild) await browserHost.clearCachePreservingSession();
   await browserHost.refreshAuthentication().catch(error => logger.warn("browser.session_refresh_failed", { message: error instanceof Error ? error.message : String(error) }));
@@ -496,7 +512,7 @@ async function start() {
 
 void start().catch(error => {
   const message = error instanceof Error ? error.message : String(error);
-  try { fs.appendFileSync(path.join(app.getPath("logs"), "launcher-fatal.log"), `${new Date().toISOString()} ${error?.stack || error}\n`); } catch {}
+  try { fs.appendFileSync(path.join(app.getPath("logs"), "launcher-fatal.log"), `${new Date().toISOString()} ${redactText(String(error?.stack || error))}\n`); } catch {}
   try { dialog.showErrorBox("CodexWeb Council could not start", message); } catch {}
   app.exit(1);
 });

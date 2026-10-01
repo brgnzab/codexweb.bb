@@ -6,6 +6,9 @@ const { assertPrivateRuntimeDataPath } = require("./runtime-state-policy.cjs");
 const { BrowserHost, allowedAuthUrl } = browserHostModule;
 const CHATGPT_PARTITION = "persist:codex-web-gpt-chatgpt";
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
+function diagnosticOrigin(value) {
+  try { return new URL(value).origin; } catch { return "unknown"; }
+}
 
 function validateConfiguredRuntimeRoots() {
   const sourceRoot = path.resolve(__dirname, "../..");
@@ -50,7 +53,7 @@ BrowserHost.prototype.bindWebContents = function bindHardenedWebContents() {
       } catch (error) {
         const message = `ChatGPT sign-in page failed to open: ${error instanceof Error ? error.message : String(error)}`;
         this.authNavigationError = new Error(message);
-        this.logger.error("browser.auth_window_open_failed", { url, message });
+        this.logger.error("browser.auth_window_open_failed", { origin: new URL(url).origin, message });
         this.setState({ status: "error", message, url, loading: false });
       }
       return { action: "deny" };
@@ -105,7 +108,7 @@ BrowserHost.prototype.createAuthView = function createHardenedAuthView(_options 
       contents.stop();
       const message = "The ChatGPT sign-in page did not finish loading within 60 seconds. Check your connection and try again.";
       this.authNavigationError = new Error(message);
-      this.logger.error("browser.auth_navigation_timeout", { url });
+      this.logger.error("browser.auth_navigation_timeout", { origin: diagnosticOrigin(url) });
       this.closeAuthView(authView, true, false);
       this.setState({ status: "error", message, url, loading: false });
     }, BROWSER_NAVIGATION_TIMEOUT_MS);
@@ -148,7 +151,7 @@ BrowserHost.prototype.createAuthView = function createHardenedAuthView(_options 
     clearNavigationTimeout();
     const message = `ChatGPT sign-in page failed to load: ${errorDescription}`;
     this.authNavigationError = new Error(message);
-    this.logger.error("browser.auth_navigation_failed", { errorCode, errorDescription, url });
+    this.logger.error("browser.auth_navigation_failed", { errorCode, origin: diagnosticOrigin(url) });
     this.closeAuthView(authView, true, false);
     this.setState({ status: "error", message, url, loading: false });
   });
@@ -169,7 +172,7 @@ BrowserHost.prototype.createAuthView = function createHardenedAuthView(_options 
         clearNavigationTimeout();
         const message = `ChatGPT sign-in page failed to open: ${error instanceof Error ? error.message : String(error)}`;
         this.authNavigationError = new Error(message);
-        this.logger.error("browser.auth_window_open_failed", { url, message });
+        this.logger.error("browser.auth_window_open_failed", { origin: diagnosticOrigin(url), message });
         this.closeAuthView(authView, true, false);
         this.setState({ status: "error", message, url, loading: false });
       });
@@ -185,7 +188,7 @@ BrowserHost.prototype.createAuthView = function createHardenedAuthView(_options 
     clearNavigationTimeout();
     const message = `ChatGPT sign-in page failed to open: ${error instanceof Error ? error.message : String(error)}`;
     this.authNavigationError = new Error(message);
-    this.logger.error("browser.auth_window_open_failed", { url: requestedUrl, message });
+    this.logger.error("browser.auth_window_open_failed", { origin: diagnosticOrigin(requestedUrl), message });
     this.closeAuthView(authView, true, false);
     this.setState({ status: "error", message, url: requestedUrl, loading: false });
   });
