@@ -8,7 +8,8 @@ const { WebSocket } = require("ws");
 const { DebuggerTransport, automationUrlAllowed } = require("../electron/debugger-transport.cjs");
 const { trustedLauncherSender, rendererCsp, installRendererCsp } = require("../electron/renderer-security.cjs");
 const { registerLoggedIpc, createLogger } = require("../electron/logging.cjs");
-const { ensurePrivateDirectory, verifyPrivatePath, protectPrivatePath, windowsAclScript } = require("../electron/private-path.cjs");
+const { assertNoReparsePath, ensurePrivateDirectory, verifyPrivatePath, protectPrivatePath, windowsAclScript } = require("../electron/private-path.cjs");
+const { sessionEvidenceAuthenticated } = require("../electron/browser-host.cjs");
 const { sealRuntimeManifest, verifyRuntimeContent } = require("../electron/runtime-integrity.cjs");
 const { validateRuntimeBundle } = require("../electron/runtime-install.cjs");
 const { createCouncilSyncClient } = require("../electron/council-connection-supervisor.cjs");
@@ -57,6 +58,12 @@ test("authentication routes and OAuth callbacks cannot be automation targets", (
   assert.equal(automationUrlAllowed("https://chatgpt.com/c/dev-fixture"), true);
 });
 
+test("retained ChatGPT session evidence stays authenticated on existing conversation pages", () => {
+  assert.equal(sessionEvidenceAuthenticated({ sessionAuthenticated: true, temporary: false, composer: true }), true);
+  assert.equal(sessionEvidenceAuthenticated({ sessionAuthenticated: true, temporary: true, composer: false }), true);
+  assert.equal(sessionEvidenceAuthenticated({ sessionAuthenticated: false, temporary: false, composer: true }), false);
+});
+
 test("privileged IPC rejects foreign renderers, subframes and navigation changes before calling handlers", async () => {
   const mainFrame = { url: "cwc-app://launcher/index.html" };
   const contents = { mainFrame };
@@ -89,6 +96,25 @@ test("Windows DACLs remove inherited broad grants, protect existing descendants 
     assert.throws(() => protectPrivatePath(root, { recursive: true }), /reparse/);
     assert.equal(fs.existsSync(path.join(outside, "secret")), false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); }
+});
+
+test("Windows private targets allow legitimate junction ancestors but reject a reparse target", { skip: process.platform !== "win32" }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cwc-private-junction-parent-"));
+  const actual = fs.mkdtempSync(path.join(os.tmpdir(), "cwc-private-junction-target-"));
+  try {
+    const file = path.join(actual, "owner-control.json");
+    fs.writeFileSync(file, "{}");
+    const junction = path.join(root, "profile-link");
+    fs.symlinkSync(actual, junction, "junction");
+    const throughJunction = path.join(junction, "owner-control.json");
+    assert.equal(assertNoReparsePath(throughJunction), path.resolve(throughJunction));
+    protectPrivatePath(throughJunction);
+    verifyPrivatePath(throughJunction);
+    assert.throws(() => assertNoReparsePath(junction), /reparse/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(actual, { recursive: true, force: true });
+  }
 });
 
 test("OAuth URL and serialized diagnostic canaries never reach persisted logs", () => {
