@@ -87,7 +87,7 @@ export async function runCouncilMcpMain(args: string[]): Promise<void> {
             return result.answer;
           } finally { await transport.release(agentId).catch(() => false); }
         },
-      });
+      }, () => Date.now(), join(councilDir, "codex-bridge-controller.json"));
       managedRuntime = new CouncilManagedRuntime({
         council: store,
         managed: managedState,
@@ -132,6 +132,11 @@ export async function runCouncilMcpMain(args: string[]): Promise<void> {
       owner: {
         token: () => ownerToken,
         projectRelay,
+        codexBridge: {
+          status: () => projectRelay!.status(),
+          setController: (threadId: string) => projectRelay!.setController(threadId),
+          clearController: () => projectRelay!.clearController(),
+        },
         startLead: async input => {
           if (!managedRuntime || !managedState) throw new Error("Managed ChatGPT browser transport is unavailable");
           const name = projectName(input.projectName);

@@ -30,6 +30,13 @@ function exact(value: unknown, keys: string[]): asserts value is Record<string, 
 function preSubmitFailureEvent(reason: string): string {
   return /composer did not preserve the complete prompt|prompt integrity/i.test(reason) ? "Composer integrity failure" : "Delivery failed before submit";
 }
+const CODEX_THREAD_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+function codexThreadId(value: unknown): string {
+  const id = text(value, "Codex Bridge Thread", 100).toLowerCase();
+  if (!CODEX_THREAD_ID.test(id)) throw new Error("Use the exact existing Codex thread ID");
+  return id;
+}
+export type CodexBridgeStatus = { configuredThread: string | null; connected: boolean; worker?: string; lastSeen?: string; error?: string };
 export function relayPeer(value: unknown): RelayPeer {
   exact(value, ["name", "kind", "conversation"]);
   const name = text(value.name, "Peer name", 100);
@@ -61,9 +68,12 @@ export class ProjectRelayService {
   private rerun = false;
   private stopped = false;
   private storageError?: Error;
+  private controllerError?: Error;
+  private controllerThreadId?: string;
   private bridge?: { worker: string; lastSeen: number };
-  constructor(private path: string, private gw: RelayGwDriver, private now = () => Date.now()) {
+  constructor(private path: string, private gw: RelayGwDriver, private now = () => Date.now(), private controllerPath?: string) {
     const file = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : { version: 1, sessions: [] };
+    this.loadController();
     if (file.version !== 1 || !Array.isArray(file.sessions)) throw new Error("Invalid project relay state");
     this.sessions = file.sessions;
     for (const session of this.sessions) {
@@ -105,6 +115,49 @@ export class ProjectRelayService {
       throw this.storageError;
     }
   }
+  private loadController(): void {
+    if (!this.controllerPath || !existsSync(this.controllerPath)) return;
+    try {
+      const value = JSON.parse(readFileSync(this.controllerPath, "utf8")) as Record<string, unknown>;
+      if (!value || value.version !== 1 || !("controllerThreadId" in value) || Object.keys(value).some(key => key !== "version" && key !== "controllerThreadId")) {
+        throw new Error("invalid schema");
+      }
+      if (value.controllerThreadId === null) this.controllerThreadId = undefined;
+      else this.controllerThreadId = codexThreadId(value.controllerThreadId);
+    } catch (error) {
+      this.controllerThreadId = undefined;
+      this.controllerError = new Error("Codex Bridge Thread configuration is invalid; set or clear it from Connections", { cause: error });
+    }
+  }
+  private persistController(controllerThreadId?: string): void {
+    if (!this.controllerPath) throw new Error("Codex Bridge Thread configuration is unavailable");
+    try {
+      mkdirSync(dirname(this.controllerPath), { recursive: true, mode: 0o700 });
+      const temp = `${this.controllerPath}.${randomUUID()}.tmp`;
+      writeFileSync(temp, JSON.stringify({ version: 1, controllerThreadId: controllerThreadId ?? null }), { mode: 0o600, flag: "wx" });
+      renameSync(temp, this.controllerPath);
+    } catch (error) {
+      throw new Error("Codex Bridge Thread configuration could not be saved", { cause: error });
+    }
+  }
+  private assertControllerMutationSafe(next?: string): void {
+    for (const session of this.sessions) {
+      for (const turn of session.turns) {
+        const peer = session.peers[turn.peer]!;
+        if (peer.kind === "gw") continue;
+        const activeClaim = turn.state === "claimed" && this.now() - (turn.claimedAt ?? 0) <= 120000;
+        if (turn.state === "submitted" || activeClaim) {
+          throw new Error("Cannot change Codex Bridge Thread while a native delivery is active or awaiting exact-response reconciliation");
+        }
+      }
+    }
+    if (next && this.sessions.some(session => reservesBindings(session) && session.peers.some(peer => peer.kind !== "gw" && peer.conversation === next))) {
+      throw new Error("The Codex Bridge Thread cannot also be a participant in an active or unresolved project relay");
+    }
+  }
+  private authorizedController(): string | undefined {
+    return this.controllerPath ? this.controllerThreadId : this.bridge?.worker;
+  }
   stop(): void { this.stopped = true; }
   list(): ProjectRelay[] { return structuredClone(this.sessions); }
   assertBrowserAccess(conversation: string | undefined, agentId: string): void {
@@ -119,8 +172,36 @@ export class ProjectRelayService {
       && conversationKey(reservation.peers[turn.peer]!) === key;
     if (!ownedBrowserTurn) throw new Error("This conversation is reserved by an active or unresolved project relay");
   }
-  status(): { connected: boolean; worker?: string; lastSeen?: string; error?: string } {
-    return { connected: Boolean(this.bridge && this.now() - this.bridge.lastSeen < 120000), ...(this.bridge ? { worker: this.bridge.worker, lastSeen: new Date(this.bridge.lastSeen).toISOString() } : {}), ...(this.storageError ? { error: this.storageError.message } : {}) };
+  status(): CodexBridgeStatus {
+    const heartbeat = this.bridge && (!this.controllerPath || this.bridge.worker === this.controllerThreadId) ? this.bridge : undefined;
+    const error = this.controllerError ?? this.storageError;
+    return {
+      configuredThread: this.controllerThreadId ?? null,
+      connected: Boolean(heartbeat && this.now() - heartbeat.lastSeen < 120000),
+      ...(heartbeat ? { worker: heartbeat.worker, lastSeen: new Date(heartbeat.lastSeen).toISOString() } : {}),
+      ...(error ? { error: error.message } : {}),
+    };
+  }
+  setController(raw: string): CodexBridgeStatus {
+    if (!this.controllerPath) throw new Error("Codex Bridge Thread configuration is unavailable");
+    const next = codexThreadId(raw);
+    if (next === this.controllerThreadId && !this.controllerError) return this.status();
+    this.assertControllerMutationSafe(next);
+    this.persistController(next);
+    this.controllerThreadId = next;
+    this.controllerError = undefined;
+    if (this.bridge?.worker !== next) this.bridge = undefined;
+    return this.status();
+  }
+  clearController(): CodexBridgeStatus {
+    if (!this.controllerPath) throw new Error("Codex Bridge Thread configuration is unavailable");
+    if (!this.controllerThreadId && !this.controllerError) return this.status();
+    this.assertControllerMutationSafe();
+    this.persistController();
+    this.controllerThreadId = undefined;
+    this.controllerError = undefined;
+    this.bridge = undefined;
+    return this.status();
   }
   start(raw: RelayInput): ProjectRelay {
     if (this.stopped) throw this.storageError ?? new Error("Project relay is stopped");
@@ -133,7 +214,8 @@ export class ProjectRelayService {
     if (this.sessions.length >= 100) throw new Error("Relay history is full; preserve/export history before starting more projects");
     if (!Array.isArray(raw.peers) || raw.peers.length !== 2) throw new Error("Choose exactly two existing chats");
     const peers = raw.peers.map(relayPeer) as [RelayPeer, RelayPeer];
-    if (peers.some(peer => peer.conversation === this.bridge?.worker)) throw new Error("The controller chat cannot also be a project participant");
+    const controller = this.authorizedController();
+    if (controller && peers.some(peer => peer.kind !== "gw" && peer.conversation === controller)) throw new Error("The configured Codex Bridge Thread cannot also be a project participant");
     if (conversationKey(peers[0]) === conversationKey(peers[1])) throw new Error("Choose two different chats");
     if (this.sessions.some(session => reservesBindings(session) && session.peers.some(peer => peers.some(other => conversationKey(other) === conversationKey(peer))))) throw new Error("A selected chat already belongs to an active or unresolved relay");
     const maxTurns = raw.maxTurns ?? 20;
@@ -164,6 +246,8 @@ export class ProjectRelayService {
     if (session.state === "cancelled") session.state = "stopped";
     if (session.state === "running") throw new Error("Relay is already running");
     if (session.state === "uat-ready") throw new Error("UAT-ready relay is already complete");
+    const controller = this.authorizedController();
+    if (controller && session.peers.some(peer => peer.kind !== "gw" && peer.conversation === controller)) throw new Error("The configured Codex Bridge Thread cannot also be a project participant");
     const conflict = this.sessions.find(other => other.id !== session.id && reservesBindings(other) && other.peers.some(peer => session.peers.some(candidate => conversationKey(candidate) === conversationKey(peer))));
     if (conflict) throw new Error("A participant chat is now reserved by another active or unresolved relay");
     const turn = session.turns.at(-1)!;
@@ -277,17 +361,23 @@ export class ProjectRelayService {
   /** Native Codex/Work host claims only owner-bound targets; no chat discovery here. */
   claim(worker: string): unknown {
     if (this.stopped) throw this.storageError ?? new Error("Project relay is stopped");
-    text(worker, "Bridge worker", 100);
-    this.bridge = { worker, lastSeen: this.now() };
+    let workerId = text(worker, "Bridge worker", 100);
+    if (this.controllerPath) {
+      if (this.controllerError) throw this.controllerError;
+      workerId = codexThreadId(workerId);
+      if (!this.controllerThreadId) throw new Error("Configure a Codex Bridge Thread in Connections before claiming native relay work");
+      if (workerId !== this.controllerThreadId) throw new Error("This Codex thread is not the configured CWC controller");
+    }
+    this.bridge = { worker: workerId, lastSeen: this.now() };
     for (const session of this.sessions) {
       const turn = session.turns.at(-1)!;
       const peer = session.peers[turn.peer]!;
-      if (peer.kind === "gw" || peer.conversation === worker) continue;
-      if (turn.state === "submitted" && turn.worker === worker) return this.job(session, turn); // reconcile only, never send again
+      if (peer.kind === "gw" || peer.conversation === workerId) continue;
+      if (turn.state === "submitted" && turn.worker === workerId) return this.job(session, turn); // reconcile only, never send again
       if (session.state !== "running") continue;
       if (turn.state === "claimed" && this.now() - (turn.claimedAt ?? 0) > 120000) turn.state = "queued";
       if (turn.state !== "queued") continue;
-      turn.state = "claimed"; turn.lease = randomUUID(); turn.worker = worker; turn.claimedAt = this.now();
+      turn.state = "claimed"; turn.lease = randomUUID(); turn.worker = workerId; turn.claimedAt = this.now();
       this.mark(session, "Preparing handoff");
       this.persist(); return this.job(session, turn);
     }

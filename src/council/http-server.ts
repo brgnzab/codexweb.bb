@@ -77,6 +77,12 @@ export interface CouncilOwnerExecutionApi {
   retry: (runId: string) => Promise<unknown>;
 }
 
+export interface CouncilOwnerCodexBridgeApi {
+  status: () => unknown;
+  setController: (threadId: string) => unknown;
+  clearController: () => unknown;
+}
+
 export interface CouncilOwnerApi {
   token: () => string | undefined;
   startLead: (input: { conversationUrl: string; projectName: string }) => Promise<unknown>;
@@ -86,6 +92,7 @@ export interface CouncilOwnerApi {
   autonomy?: CouncilOwnerAutonomyApi;
   memory?: CouncilOwnerMemoryApi;
   execution?: CouncilOwnerExecutionApi;
+  codexBridge?: CouncilOwnerCodexBridgeApi;
   projectRelay?: ProjectRelayService;
 }
 
@@ -201,6 +208,9 @@ function ownerExactKeys(body: Record<string, unknown>, allowed: readonly string[
 }
 
 const OWNER_ROUTE_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "/api/owner/codex-bridge/status": [],
+  "/api/owner/codex-bridge/set": ["thread_id"],
+  "/api/owner/codex-bridge/clear": [],
   "/api/owner/project-relay/list": [],
   "/api/owner/project-relay/start": ["requestId", "name", "task", "peers", "maxTurns", "resumeId"],
   "/api/owner/project-relay/cancel": ["relay_id"],
@@ -296,6 +306,16 @@ export function startCouncilHttpServer(
             const body = await parseOwnerJson(request);
             const allowedOwnerFields = OWNER_ROUTE_FIELDS[url.pathname];
             if (allowedOwnerFields) ownerExactKeys(body, allowedOwnerFields);
+
+            if (url.pathname.startsWith("/api/owner/codex-bridge/")) {
+              const bridge = options.owner?.codexBridge;
+              if (!bridge) return ownerJson("Codex Bridge Thread configuration is unavailable", 503);
+              const operation = url.pathname.slice("/api/owner/codex-bridge/".length);
+              if (operation === "status") return ownerJson(bridge.status());
+              if (operation === "set") return ownerJson(bridge.setController(ownerString(body, "thread_id", 100)));
+              if (operation === "clear") return ownerJson(bridge.clearController());
+              return ownerJson("Unknown Codex bridge operation", 404);
+            }
 
             if (url.pathname.startsWith("/api/owner/project-relay/")) {
               const relay = options.owner?.projectRelay;

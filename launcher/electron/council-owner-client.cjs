@@ -61,6 +61,12 @@ function assertId(value, label) {
   return text;
 }
 
+function assertCodexThreadId(value) {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(text)) throw new Error("Codex Bridge Thread ID is invalid");
+  return text;
+}
+
 function safeLimit(value, fallback, max) {
   if (value === undefined || value === null) return fallback;
   if (!Number.isInteger(value) || value < 1) throw new Error("limit is invalid");
@@ -161,6 +167,9 @@ async function focusAgentConversation(agentId, options = {}) {
 }
 
 async function listExecutionRuns(options = {}) { return await optionalOwnerRequest("execution/runs", {}, [], options); }
+async function codexBridgeStatus(options = {}) { return await ownerRequest("codex-bridge/status", {}, options); }
+async function setCodexBridgeController(threadId, options = {}) { return await ownerRequest("codex-bridge/set", { thread_id: assertCodexThreadId(threadId) }, options); }
+async function clearCodexBridgeController(options = {}) { return await ownerRequest("codex-bridge/clear", {}, options); }
 async function listProjectRelays(options = {}) { return await ownerRequest("project-relay/list", {}, options); }
 async function startProjectRelay(input, options = {}) { return await ownerRequest("project-relay/start", input, options); }
 async function cancelProjectRelay(id, options = {}) { return await ownerRequest("project-relay/cancel", { relay_id: assertId(id, "relayId") }, options); }
@@ -215,6 +224,9 @@ async function clearProjectMemory(roomId, options = {}) {
 }
 
 module.exports = {
+  codexBridgeStatus,
+  setCodexBridgeController,
+  clearCodexBridgeController,
   listProjectRelays,
   startProjectRelay,
   cancelProjectRelay,

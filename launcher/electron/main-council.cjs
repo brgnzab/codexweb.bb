@@ -32,6 +32,9 @@ const { deriveCouncilCapabilities } = require("./council-capabilities.cjs");
 const { CouncilConnectionSupervisor } = require("./council-connection-supervisor.cjs");
 const {
   autonomyStatus,
+  codexBridgeStatus,
+  setCodexBridgeController,
+  clearCodexBridgeController,
   listProjectRelays,
   startProjectRelay,
   cancelProjectRelay,
@@ -355,6 +358,9 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:council-agent-focus", (_event, agentId) => focusAgentConversation(safeCouncilId(agentId, "agentId")));
   handle("launcher:council-execution-runs", () => listExecutionRuns());
+  handle("launcher:codex-bridge-status", () => codexBridgeStatus());
+  handle("launcher:codex-bridge-set", (_event, threadId) => setCodexBridgeController(threadId));
+  handle("launcher:codex-bridge-clear", () => clearCodexBridgeController());
   handle("launcher:project-relay-list", () => listProjectRelays());
   handle("launcher:project-relay-start", (_event, input) => startProjectRelay(input));
   handle("launcher:project-relay-cancel", (_event, id) => cancelProjectRelay(safeCouncilId(id, "relayId")));

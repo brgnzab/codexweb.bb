@@ -161,6 +161,84 @@ describe("Owner lifecycle control", () => {
   });
 });
 
+describe("Codex Bridge Thread configuration", () => {
+  const controllerA = "10000000-0000-0000-0000-000000000001";
+  const controllerB = "20000000-0000-0000-0000-000000000002";
+
+  test("set, change, clear and restart persistence stay outside relay state", () => {
+    const dir = root();
+    const relayPath = join(dir, "relay.json");
+    const controllerPath = join(dir, "codex-bridge-controller.json");
+    let service = new ProjectRelayService(relayPath, { run: async () => "unused" }, () => 1_000, controllerPath);
+    expect(service.status()).toMatchObject({ configuredThread: null, connected: false });
+    expect(() => service.setController("not-a-thread")).toThrow("exact existing Codex thread ID");
+
+    expect(service.setController(controllerA)).toMatchObject({ configuredThread: controllerA, connected: false });
+    expect(JSON.parse(readFileSync(controllerPath, "utf8"))).toEqual({ version: 1, controllerThreadId: controllerA });
+    expect(JSON.parse(readFileSync(relayPath, "utf8")).controllerThreadId).toBeUndefined();
+
+    service = new ProjectRelayService(relayPath, { run: async () => "unused" }, () => 1_000, controllerPath);
+    expect(service.status().configuredThread).toBe(controllerA);
+    expect(service.setController(controllerB).configuredThread).toBe(controllerB);
+    expect(service.clearController()).toMatchObject({ configuredThread: null, connected: false });
+    expect(JSON.parse(readFileSync(controllerPath, "utf8"))).toEqual({ version: 1, controllerThreadId: null });
+  });
+
+  test("only the configured controller can claim and only its recent heartbeat is Connected", () => {
+    const dir = root();
+    let now = 1_000;
+    const service = new ProjectRelayService(join(dir, "relay.json"), { run: async () => "unused" }, () => now, join(dir, "controller.json"));
+    service.setController(controllerA);
+
+    const conflict = input("controller-conflict");
+    conflict.peers[0] = { ...conflict.peers[0], conversation: controllerA };
+    expect(() => service.start(conflict)).toThrow("cannot also be a project participant");
+
+    service.start(input("request-1"));
+    expect(() => service.claim(controllerB)).toThrow("not the configured CWC controller");
+    expect(service.status()).toMatchObject({ configuredThread: controllerA, connected: false });
+
+    const job: any = service.claim(controllerA);
+    expect(job).toBeTruthy();
+    expect(service.status()).toMatchObject({ configuredThread: controllerA, connected: true, worker: controllerA });
+    now += 120_001;
+    expect(service.status().connected).toBe(false);
+  });
+
+  test("controller changes fail closed across active and submitted native delivery boundaries", () => {
+    const dir = root();
+    const service = new ProjectRelayService(join(dir, "relay.json"), { run: async () => "unused" }, () => 1_000, join(dir, "controller.json"));
+    service.setController(controllerA);
+    service.start(input("request-1"));
+    const job: any = service.claim(controllerA);
+
+    expect(() => service.setController(controllerB)).toThrow("native delivery is active");
+    service.submitting(...ids(job));
+    expect(() => service.clearController()).toThrow("awaiting exact-response reconciliation");
+    expect(() => service.setController(controllerB)).toThrow("awaiting exact-response reconciliation");
+
+    service.finish(...ids(job), "Exact response received.\nCWC_STATE: CONTINUE", "receipt-1");
+    expect(service.setController(controllerB).configuredThread).toBe(controllerB);
+    expect(service.clearController().configuredThread).toBeNull();
+  });
+
+  test("configured bridge does not affect GPT Web-only relay execution", async () => {
+    const dir = root();
+    let calls = 0;
+    const service = new ProjectRelayService(join(dir, "relay.json"), { run: async () => {
+      calls++;
+      return calls === 1 ? "Draft complete.\nCWC_STATE: CONTINUE" : "Review complete.\nCWC_STATE: UAT_READY";
+    } }, () => 1_000, join(dir, "controller.json"));
+    service.setController(controllerA);
+    service.start(input("web-only", "gw", "gw"));
+    await service.idle();
+
+    expect(calls).toBe(2);
+    expect(service.list()[0]!.state).toBe("uat-ready");
+    expect(service.claim(controllerA)).toBeNull();
+  });
+});
+
 describe("Owner UI regression contracts", () => {
   test("Project Relay owns its viewport scroll and exposes compact lifecycle controls", () => {
     const css = readFileSync(join(import.meta.dir, "..", "launcher", "src", "project-relay.css"), "utf8");
@@ -187,6 +265,20 @@ describe("Owner UI regression contracts", () => {
     expect(http).toContain('["requestId", "name", "task", "peers", "maxTurns", "resumeId"]');
     expect(main).toContain("run: async (peer, prompt, deliveryId, onPhase)");
     expect(main).toContain("transport.run({ agentId, conversationUrl: peer.conversation, prompt, onPhase })");
+  });
+
+  test("Connections exposes Codex Bridge Thread controls through trusted IPC without model/effort controls", () => {
+    const app = readFileSync(join(import.meta.dir, "..", "launcher", "src", "CouncilApp.tsx"), "utf8");
+    const preload = readFileSync(join(import.meta.dir, "..", "launcher", "electron", "preload.cjs"), "utf8");
+    const main = readFileSync(join(import.meta.dir, "..", "launcher", "electron", "main-council.cjs"), "utf8");
+    expect(app).toContain("<h3>Codex Bridge Thread</h3>");
+    expect(app).toContain("api.codexBridgeStatus()");
+    expect(app).toContain("api.setCodexBridgeController");
+    expect(app).toContain("api.clearCodexBridgeController");
+    expect(preload).toContain('ipcRenderer.invoke("launcher:codex-bridge-set", threadId)');
+    expect(main).toContain('handle("launcher:codex-bridge-set"');
+    const bridgeSection = app.slice(app.indexOf("<h3>Codex Bridge Thread</h3>"), app.indexOf("<h3>Connect secure tunnel</h3>"));
+    expect(bridgeSection).not.toMatch(/model|reasoning effort/i);
   });
 
   test("other manual-entry pages retain drafts in renderer memory and CLEAR only those drafts", () => {

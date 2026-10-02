@@ -6,6 +6,9 @@ const path = require("node:path");
 const {
   assertConversationUrl,
   bindCurrentConversationAsLead,
+  codexBridgeStatus,
+  setCodexBridgeController,
+  clearCodexBridgeController,
   listObservations,
   readObservationScreenshot,
   setSupervisorManager,
@@ -124,6 +127,35 @@ test("relay owner client sends only exact targets and bounded task through the p
     });
     assert.equal(JSON.stringify(request.options.body).includes("r".repeat(64)), false);
     await assert.rejects(() => startCouncilRelay({ ...input, peerConversationUrl: "https://evil.example/c/B" }, { fetchImpl: () => { throw new Error("must not send"); } }), /persistent ChatGPT conversation/);
+  } finally { fixture.restore(); }
+});
+
+test("Codex bridge owner methods use only protected loopback routes and validate the thread id before send", async () => {
+  const fixture = withOwnerDescriptor("council-owner-codex-bridge-", "d".repeat(64));
+  try {
+    const calls = [];
+    const fetchImpl = async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, result: { configuredThread: null, connected: false } }),
+      };
+    };
+    const options = { fetchImpl, timeoutMs: 250 };
+    await codexBridgeStatus(options);
+    await setCodexBridgeController("10000000-0000-0000-0000-000000000001", options);
+    await clearCodexBridgeController(options);
+    assert.deepEqual(calls.map(call => call.url), [
+      "http://127.0.0.1:17842/api/owner/codex-bridge/status",
+      "http://127.0.0.1:17842/api/owner/codex-bridge/set",
+      "http://127.0.0.1:17842/api/owner/codex-bridge/clear",
+    ]);
+    assert.deepEqual(JSON.parse(calls[1].options.body), { thread_id: "10000000-0000-0000-0000-000000000001" });
+    await assert.rejects(
+      () => setCodexBridgeController("not-a-thread", { fetchImpl: () => { throw new Error("must not send"); } }),
+      /Codex Bridge Thread ID is invalid/,
+    );
   } finally { fixture.restore(); }
 });
 

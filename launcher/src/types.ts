@@ -405,6 +405,14 @@ export type UpdateState =
   | { status: "available" | "downloading" | "installing"; version: string }
   | { status: "error"; message: string };
 
+export interface CodexBridgeStatusView {
+  configuredThread: string | null;
+  connected: boolean;
+  worker?: string;
+  lastSeen?: string;
+  error?: string;
+}
+
 export interface LauncherSnapshot {
   state: LauncherState;
   browser: BrowserState | null;
@@ -456,6 +464,9 @@ export interface LauncherApi {
   }>;
   focusCouncilAgent(agentId: string): Promise<{ agentId: string; focused: true }>;
   councilExecutionRuns(): Promise<CouncilExecutionRunView[]>;
+  codexBridgeStatus(): Promise<CodexBridgeStatusView>;
+  setCodexBridgeController(threadId: string): Promise<CodexBridgeStatusView>;
+  clearCodexBridgeController(): Promise<CodexBridgeStatusView>;
   projectRelayList(): Promise<import("./ProjectRelayPanel").ProjectRelaySnapshot>;
   projectRelayStart(input: import("./ProjectRelayPanel").ProjectRelayInput): Promise<import("./ProjectRelayPanel").ProjectRelayView>;
   projectRelayCancel(id: string): Promise<import("./ProjectRelayPanel").ProjectRelayView>;

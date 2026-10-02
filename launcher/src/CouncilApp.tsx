@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { BrowserState, CouncilAutonomyStatusView, CouncilExecutionRunView, CouncilRuntimeViewState, CouncilSupervisorStatusView, LauncherSnapshot, LogRecord, ManagedAgentView } from "./types";
+import type { BrowserState, CodexBridgeStatusView, CouncilAutonomyStatusView, CouncilExecutionRunView, CouncilRuntimeViewState, CouncilSupervisorStatusView, LauncherSnapshot, LogRecord, ManagedAgentView } from "./types";
 import { deriveCouncilConnections, type CouncilConnectionNode, type CouncilConnectorObservation } from "./councilConnectionModel";
 import { ExecutionBadge, ExecutionInspector, executionByAgent, useCouncilExecutionRuns } from "./CouncilExecutionInspector";
 import "./council-shell.css";
@@ -34,6 +34,7 @@ type View = "overview" | "relay" | "chatgpt" | "agents" | "work" | "executions" 
 // Manual-entry drafts live only in renderer memory. They survive page navigation/unmounts but are
 // intentionally not written to disk, browser storage, auth/session state, logs, or Council runtime state.
 let connectionDraft = { tunnelId: "", runtimeKey: "" };
+let codexBridgeDraft = "";
 let memoryQueryDraft = "";
 
 const NAV: Array<{ id: View; label: string; hint: string; group: "workspace" | "intelligence" | "system" }> = [
@@ -186,6 +187,7 @@ export function CouncilApp() {
     if (!window.confirm("Clear local CWC cache and work history? This removes relay/job/runtime state and optional connection configuration, but keeps your ChatGPT sign-in.")) return;
     await api.clearCache();
     connectionDraft = { tunnelId: "", runtimeKey: "" };
+    codexBridgeDraft = "";
     memoryQueryDraft = "";
     setConnectorObservation("unknown");
     const value = await api.snapshot();
@@ -289,11 +291,47 @@ function ManagerControl({ agents }: { agents: ManagedAgentView[] }) {
 function ConnectionsWorkspace({ connections, snapshot, busy, onVerify, onStartRuntime, onOpenConnectorSetup }: { connections: CouncilConnectionNode[]; snapshot: LauncherSnapshot; busy: boolean; onVerify: () => void; onStartRuntime: () => void; onOpenConnectorSetup: () => void }) {
   const [tunnelId, setTunnelIdState] = useState(() => connectionDraft.tunnelId);
   const [runtimeKey, setRuntimeKeyState] = useState(() => connectionDraft.runtimeKey);
+  const [bridgeThread, setBridgeThreadState] = useState(() => codexBridgeDraft);
+  const [bridge, setBridge] = useState<CodexBridgeStatusView | null>(null);
+  const [bridgeBusy, setBridgeBusy] = useState(false);
+  const [bridgeMessage, setBridgeMessage] = useState<string | null>(null);
   const [setupBusy, setSetupBusy] = useState(false);
   const [setupMessage, setSetupMessage] = useState<string | null>(null);
   const setTunnelId = (value: string) => { connectionDraft = { ...connectionDraft, tunnelId: value }; setTunnelIdState(value); };
   const setRuntimeKey = (value: string) => { connectionDraft = { ...connectionDraft, runtimeKey: value }; setRuntimeKeyState(value); };
+  const setBridgeThread = (value: string) => { codexBridgeDraft = value; setBridgeThreadState(value); };
   const clearInputs = () => { connectionDraft = { tunnelId: "", runtimeKey: "" }; setTunnelIdState(""); setRuntimeKeyState(""); };
+  const refreshBridge = useCallback(async () => {
+    if (!api) return;
+    try {
+      const value = await api.codexBridgeStatus();
+      setBridge(value);
+      if (value.error) setBridgeMessage(value.error);
+    } catch (error) { setBridgeMessage(messageOf(error)); }
+  }, []);
+  useEffect(() => {
+    void refreshBridge();
+    const timer = setInterval(() => void refreshBridge(), 3_000);
+    return () => clearInterval(timer);
+  }, [refreshBridge]);
+  const saveBridge = async () => {
+    if (!api || bridgeBusy) return;
+    setBridgeBusy(true); setBridgeMessage(null);
+    try {
+      const value = await api.setCodexBridgeController(bridgeThread.trim());
+      setBridge(value); setBridgeThread(""); setBridgeMessage("Codex Bridge Thread saved. Connected status requires a recent heartbeat from that exact controller.");
+    } catch (error) { setBridgeMessage(messageOf(error)); }
+    finally { setBridgeBusy(false); }
+  };
+  const clearBridge = async () => {
+    if (!api || bridgeBusy) return;
+    setBridgeBusy(true); setBridgeMessage(null);
+    try {
+      const value = await api.clearCodexBridgeController();
+      setBridge(value); setBridgeThread(""); setBridgeMessage("Codex Bridge Thread cleared.");
+    } catch (error) { setBridgeMessage(messageOf(error)); }
+    finally { setBridgeBusy(false); }
+  };
   const connect = async () => {
     if (!api || setupBusy) return;
     setSetupBusy(true); setSetupMessage(null);
@@ -308,9 +346,11 @@ function ConnectionsWorkspace({ connections, snapshot, busy, onVerify, onStartRu
     } catch (error) { setSetupMessage(messageOf(error)); } finally { setSetupBusy(false); }
   };
   const canConnect = snapshot.mcpCredentialsConfigured || (/^tunnel_[a-f0-9]{32}$/i.test(tunnelId.trim()) && runtimeKey.trim().length >= 20);
+  const canSaveBridge = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(bridgeThread.trim());
   return <div className="mission-page"><PageHeader eyebrow="Connection graph" title="Connections" body="Council runtime, Playwright and the ChatGPT session start with CWC. Secure Tunnel, MCP and the ChatGPT connector are optional and may stay Off." actions={<><button disabled={busy} onClick={onStartRuntime}>Start / repair local runtime</button><button disabled={busy} onClick={onVerify}>Verify MCP + connector</button><button className="primary" disabled={busy} onClick={onOpenConnectorSetup}>Open ChatGPT connector setup</button></>} /><ConnectionList connections={connections} />
     <div className="connection-setup-grid">
       <section className="connection-setup-pane"><div className="connection-setup-heading"><div><span className="connection-setup-label">Council runtime</span><h3>Local runtime</h3></div></div><p>The local browser-only Council runtime starts automatically with CWC. No Tunnel ID, API key, terminal command, or backend setup is required.</p><div className="connection-actions"><button className="primary" disabled={busy} onClick={onStartRuntime}>Start / repair local runtime</button></div></section>
+      <section className="connection-setup-pane"><div className="connection-setup-heading"><div><span className="connection-setup-label">Native relay</span><h3>Codex Bridge Thread</h3></div><em className={bridge?.connected ? "good" : "muted"}>{bridge?.connected ? "Connected" : "Disconnected"}</em></div><p>Authorize exactly one existing Codex thread as CWC's native courier. CWC accepts bridge work only when the running thread's real <code>CODEX_THREAD_ID</code> matches this setting.</p><p>Configured thread: <code>{bridge?.configuredThread ?? "Not configured"}</code>{bridge?.lastSeen ? ` · last heartbeat ${new Date(bridge.lastSeen).toLocaleTimeString()}` : ""}</p><div className="connection-fields"><label><span>Codex thread ID</span><input value={bridgeThread} onChange={event => setBridgeThread(event.target.value)} placeholder="00000000-0000-0000-0000-000000000000" autoComplete="off" spellCheck={false} /></label></div><div className="connection-actions"><button className="primary" disabled={bridgeBusy || !canSaveBridge} onClick={() => void saveBridge()}>{bridge?.configuredThread ? "Change controller" : "Set controller"}</button><button disabled={bridgeBusy || (!bridge?.configuredThread && !bridge?.error)} onClick={() => void clearBridge()}>Clear controller</button></div>{bridgeMessage ? <p className="connection-setup-message">{bridgeMessage}</p> : null}</section>
       <section className="connection-setup-pane"><div className="connection-setup-heading"><div><span className="connection-setup-label">Secure tunnel</span><h3>Connect secure tunnel</h3></div><em className={snapshot.mcpCredentialsConfigured ? "good" : "muted"}>{snapshot.mcpCredentialsConfigured ? "credentials saved" : "optional · off"}</em></div><p>The Tunnel starts the optional Council MCP path. It is not required for normal GPT Web Project Relay work.</p>
         {!snapshot.mcpCredentialsConfigured ? <div className="connection-fields"><label><span>Tunnel ID</span><input value={tunnelId} onChange={event => setTunnelId(event.target.value)} placeholder="tunnel_…" autoComplete="off" spellCheck={false} /></label><label><span>Tunnels Read + Use key</span><input type="password" value={runtimeKey} onChange={event => setRuntimeKey(event.target.value)} placeholder="Paste runtime key" autoComplete="off" /></label></div> : null}
         <div className="connection-actions"><button className="primary" disabled={setupBusy || !canConnect} onClick={() => void connect()}>{setupBusy ? "Connecting…" : snapshot.mcpCredentialsConfigured ? "Reconnect saved tunnel" : "Connect secure tunnel"}</button><button disabled={setupBusy} onClick={() => void api!.openExternal(snapshot.urls.tunnels)}>Open Tunnel settings</button><button disabled={setupBusy || (!tunnelId && !runtimeKey)} onClick={clearInputs}>CLEAR</button></div>{setupMessage ? <p className="connection-setup-message">{setupMessage}</p> : null}
@@ -320,7 +360,6 @@ function ConnectionsWorkspace({ connections, snapshot, busy, onVerify, onStartRu
     <section className="mission-note"><strong>Browser-only Council is the default.</strong><p>Council runtime, Playwright surfaces and your ChatGPT session start automatically. Tunnel/MCP/connector capability is optional and only starts when you configure it here.</p><small>{snapshot.mcpCredentialsConfigured ? "Tunnel credentials are saved locally." : "Tunnel credentials are not configured."}</small></section>
   </div>;
 }
-
 function ConnectionList({ connections, compact = false }: { connections: CouncilConnectionNode[]; compact?: boolean }) {
   return <div className={compact ? "connection-list compact" : "connection-list"}>{connections.map(item => <article key={item.id} className={statusTone(item.status)}><i /><div><strong>{item.label}</strong><p>{item.evidence}</p>{!compact ? <small className="connection-repair"><b>NEXT ACTION</b>{item.repair}</small> : null}</div><em>{item.detail}</em></article>)}</div>;
 }
