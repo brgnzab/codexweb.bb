@@ -2,15 +2,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-// Reject links in every existing component, including parents outside the configured root.
+// A sensitive target itself must never be a link/reparse point. Ancestor junctions are allowed:
+// Windows installations commonly place application/profile trees below legitimate junctions.
+// The target's own protected DACL is still enforced/verified after traversal, so an ancestor
+// redirect cannot bypass the owner+SYSTEM permission boundary.
 function assertNoReparsePath(value) {
   const absolute = path.resolve(value);
-  let current = path.parse(absolute).root;
-  for (const part of absolute.slice(current.length).split(path.sep).filter(Boolean)) {
-    current = path.join(current, part);
-    const stat = fs.lstatSync(current, { throwIfNoEntry: false });
-    if (stat?.isSymbolicLink()) throw new Error("Sensitive path contains a reparse point");
-  }
+  const stat = fs.lstatSync(absolute, { throwIfNoEntry: false });
+  if (stat?.isSymbolicLink()) throw new Error("Sensitive path contains a reparse point");
   return absolute;
 }
 
