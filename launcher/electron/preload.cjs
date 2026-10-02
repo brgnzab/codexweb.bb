@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   codexBridgeStatus: () => ipcRenderer.invoke("launcher:codex-bridge-status"),
   setCodexBridgeController: (threadId) => ipcRenderer.invoke("launcher:codex-bridge-set", threadId),
   clearCodexBridgeController: () => ipcRenderer.invoke("launcher:codex-bridge-clear"),
+  reconnectCodexBridge: () => ipcRenderer.invoke("launcher:codex-bridge-reconnect"),
   projectRelayList: () => ipcRenderer.invoke("launcher:project-relay-list"),
   projectRelayStart: (input) => ipcRenderer.invoke("launcher:project-relay-start", input),
   projectRelayCancel: (id) => ipcRenderer.invoke("launcher:project-relay-cancel", id),

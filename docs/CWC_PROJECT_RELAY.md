@@ -19,7 +19,7 @@ This route does not require Council SAY/WAKE/SLEEP actions. The existing Council
 ## Delivery and recovery
 
 - Exact GPT Web conversation URLs use the existing persistent browser transport, without conversation resurrection or new-chat fallback.
-- Existing native Codex/Work chat IDs use an owner-authorized controller running inside Codex with its native chat tools. The local helper is `scripts/cwc-desktop-bridge.cjs`; it talks only to the authenticated loopback owner API. It never prints credentials.
+- Existing native Codex/Work chat IDs use an owner-authorized controller running inside Codex with its native chat tools. When a native relay starts/resumes and the configured controller is disconnected, the launcher requests a one-shot activation of that exact saved controller; Connections also exposes a manual **Reconnect controller** action. The local helper is `scripts/cwc-desktop-bridge.cjs`; it talks only to the authenticated loopback owner API. It never prints credentials.
 - A delivery is durably marked submitted before calling an external send. An uncertain delivery is never automatically replayed. A desktop controller reconnects by inspecting the exact prompt in the bound chat and accepting only that turn's completed final answer.
 - A claimed but unsubmitted desktop delivery may be reclaimed after its two-minute lease expires. The old lease cannot send or complete it.
 - Cancellation prevents future handoffs; it cannot undo a message already submitted. A cancelled relay with an outstanding submission continues reserving its chats until the response is reconciled.

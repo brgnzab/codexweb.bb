@@ -30,6 +30,7 @@ const { createCouncilBrowserHostClass } = require("./council-browser-host.cjs");
 const { createCouncilBrowserControlServerClass } = require("./council-control-server.cjs");
 const { deriveCouncilCapabilities } = require("./council-capabilities.cjs");
 const { CouncilConnectionSupervisor } = require("./council-connection-supervisor.cjs");
+const { CodexControllerWake, needsNativeRelay } = require("./codex-controller-wake.cjs");
 const {
   autonomyStatus,
   codexBridgeStatus,
@@ -128,6 +129,7 @@ let quitting = false;
 let shutdownInProgress = false;
 let exitCommitted = false;
 let automationTransport = null;
+let codexControllerWake = null;
 
 function send(channel, value) {
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(channel, value);
@@ -361,8 +363,22 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:codex-bridge-status", () => codexBridgeStatus());
   handle("launcher:codex-bridge-set", (_event, threadId) => setCodexBridgeController(threadId));
   handle("launcher:codex-bridge-clear", () => clearCodexBridgeController());
+  handle("launcher:codex-bridge-reconnect", async () => {
+    const status = await codexBridgeStatus();
+    if (!status.configuredThread) throw new Error("Set a Codex Bridge Thread before reconnecting");
+    if (!status.connected) codexControllerWake.activate(status.configuredThread);
+    return codexBridgeStatus();
+  });
   handle("launcher:project-relay-list", () => listProjectRelays());
-  handle("launcher:project-relay-start", (_event, input) => startProjectRelay(input));
+  handle("launcher:project-relay-start", async (_event, input) => {
+    const relay = await startProjectRelay(input);
+    if (needsNativeRelay(relay?.peers)) {
+      const status = await codexBridgeStatus();
+      if (!status.configuredThread) throw new Error("Relay is queued. Set a Codex Bridge Thread in Connections, then reconnect it.");
+      if (!status.connected) codexControllerWake.activate(status.configuredThread);
+    }
+    return relay;
+  });
   handle("launcher:project-relay-cancel", (_event, id) => cancelProjectRelay(safeCouncilId(id, "relayId")));
   handle("launcher:council-execution-read", (_event, runId) => readExecutionRun(safeCouncilId(runId, "runId")));
   handle("launcher:council-execution-events", (_event, runId) => readExecutionEvents(safeCouncilId(runId, "runId")));
@@ -457,6 +473,7 @@ async function start() {
   if (stateStore.read().sessionRefreshReminderAt === null) stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
   const autostart = getAutostart(app); if (autostart.supported && stateStore.read().autoStart !== autostart.enabled) setAutostart(app, stateStore.read().autoStart);
   const logger = createLogger({ filePath: path.join(app.getPath("logs"), "launcher.jsonl"), publish: record => send("launcher:log", record) });
+  codexControllerWake = new CodexControllerWake({ coreHome: CORE_HOME, logger });
   const startHidden = process.argv.includes("--hidden") && stateStore.read().onboardingComplete;
   nativeTheme.themeSource = "system";
   mainWindow = createWindow({ logger, stateStore, startHidden });

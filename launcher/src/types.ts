@@ -467,6 +467,7 @@ export interface LauncherApi {
   codexBridgeStatus(): Promise<CodexBridgeStatusView>;
   setCodexBridgeController(threadId: string): Promise<CodexBridgeStatusView>;
   clearCodexBridgeController(): Promise<CodexBridgeStatusView>;
+  reconnectCodexBridge(): Promise<CodexBridgeStatusView>;
   projectRelayList(): Promise<import("./ProjectRelayPanel").ProjectRelaySnapshot>;
   projectRelayStart(input: import("./ProjectRelayPanel").ProjectRelayInput): Promise<import("./ProjectRelayPanel").ProjectRelayView>;
   projectRelayCancel(id: string): Promise<import("./ProjectRelayPanel").ProjectRelayView>;

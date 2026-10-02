@@ -275,8 +275,14 @@ describe("Owner UI regression contracts", () => {
     expect(app).toContain("api.codexBridgeStatus()");
     expect(app).toContain("api.setCodexBridgeController");
     expect(app).toContain("api.clearCodexBridgeController");
+    expect(app).toContain("api.reconnectCodexBridge");
+    expect(app).toContain(">Reconnect controller</button>");
     expect(preload).toContain('ipcRenderer.invoke("launcher:codex-bridge-set", threadId)');
+    expect(preload).toContain('ipcRenderer.invoke("launcher:codex-bridge-reconnect")');
     expect(main).toContain('handle("launcher:codex-bridge-set"');
+    expect(main).toContain('handle("launcher:codex-bridge-reconnect"');
+    expect(main).toContain("needsNativeRelay(relay?.peers)");
+    expect(main).toContain("codexControllerWake.activate(status.configuredThread)");
     const bridgeSection = app.slice(app.indexOf("<h3>Codex Bridge Thread</h3>"), app.indexOf("<h3>Connect secure tunnel</h3>"));
     expect(bridgeSection).not.toMatch(/model|reasoning effort/i);
   });

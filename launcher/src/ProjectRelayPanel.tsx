@@ -139,7 +139,7 @@ export function ProjectRelayPanel() {
   };
   return <section className="project-relay">
     <header><h2>Work between your existing chats</h2><p>Choose two participants, give them the task, and let CWC carry their answers back and forth until a blocker or UAT-ready result.</p></header>
-    <p role="status">Desktop bridge: <strong>{snapshot.bridge.connected ? "Connected" : "Not connected"}</strong>{!snapshot.bridge.connected && " — GPT Web pairs can run now. Codex/Work deliveries wait for the CWC controller."}</p>
+    <p role="status">Desktop bridge: <strong>{snapshot.bridge.connected ? "Connected" : "Not connected"}</strong>{!snapshot.bridge.connected && " — CWC will wake the configured controller automatically when this relay needs Codex/Work."}</p>
     {(error || loadError || snapshot.bridge.error) && <p role="alert" className="relay-error">{error || loadError || snapshot.bridge.error}</p>}
     <form onSubmit={event => { event.preventDefault(); void start(); }}>
       <fieldset disabled={busy || Boolean(pending.current)}><legend>New project</legend>
