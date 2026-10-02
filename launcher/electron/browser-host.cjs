@@ -121,6 +121,10 @@ function isTemporaryChatUrl(value) {
     && parsed.searchParams.get("temporary-chat") === "true";
 }
 
+function sessionEvidenceAuthenticated(result) {
+  return result?.sessionAuthenticated === true;
+}
+
 function isChatGptBackendUrl(value) {
   let parsed;
   try {
@@ -1244,7 +1248,7 @@ class BrowserHost {
       readyState: "unknown",
     }));
     let result = await probe(this.view.webContents);
-    if (!result.sessionAuthenticated
+    if (!sessionEvidenceAuthenticated(result)
       && this.authView
       && !this.authView.webContents.isDestroyed()) {
       const authResult = await probe(this.authView.webContents);
@@ -1256,7 +1260,7 @@ class BrowserHost {
         result = await probe(this.view.webContents);
       }
     }
-    if (result.sessionAuthenticated) {
+    if (sessionEvidenceAuthenticated(result)) {
       if (this.authView && !this.authView.webContents.isDestroyed()) {
         this.closeAuthView(this.authView, true, false);
       }
@@ -1455,5 +1459,6 @@ module.exports = {
   IDLE_BROWSER_URL,
   isChatGptCloudflareChallengeResponse,
   isTemporaryChatUrl,
+  sessionEvidenceAuthenticated,
   TEMPORARY_CHAT_URL,
 };
