@@ -13,6 +13,23 @@ function assertNoReparsePath(value) {
   return absolute;
 }
 
+function assertNoReparseDescendants(value) {
+  const root = path.resolve(value);
+  const rootStat = fs.lstatSync(root, { throwIfNoEntry: false });
+  if (!rootStat?.isDirectory()) return root;
+  const pending = [root];
+  while (pending.length) {
+    const current = pending.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const child = path.join(current, entry.name);
+      const stat = fs.lstatSync(child);
+      if (stat.isSymbolicLink()) throw new Error("Sensitive path contains a reparse point");
+      if (stat.isDirectory()) pending.push(child);
+    }
+  }
+  return root;
+}
+
 function windowsAclScript(recursive, verifyOnly) {
   return `
 $ErrorActionPreference = 'Stop'
@@ -65,6 +82,7 @@ function windowsAcl(target, recursive, verifyOnly) {
 
 function protectPrivatePath(value, { recursive = false } = {}) {
   const target = assertNoReparsePath(value);
+  if (recursive) assertNoReparseDescendants(target);
   if (process.platform === "win32") windowsAcl(target, recursive, false);
   else fs.chmodSync(target, fs.statSync(target).isDirectory() ? 0o700 : 0o600);
   return target;
