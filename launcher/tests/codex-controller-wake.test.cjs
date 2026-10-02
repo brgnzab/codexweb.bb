@@ -13,7 +13,8 @@ function fakeChild() {
   const child = new EventEmitter();
   child.exitCode = null;
   child.signalCode = null;
-  child.unref = () => {};
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
   return child;
 }
 
@@ -23,43 +24,72 @@ test("native relay detection is limited to Codex and Work peers", () => {
   assert.equal(needsNativeRelay([{ kind: "work" }, { kind: "gw" }]), true);
 });
 
-test("controller activation resumes the exact configured thread without model or effort overrides", () => {
+test("controller activation queues one message to the exact configured native thread", async () => {
   const calls = [];
   const child = fakeChild();
   const coreHome = path.resolve("D:/CWC/runtime");
   const wake = new CodexControllerWake({
     coreHome,
     resolveExecutable: () => "codex.exe",
+    spawnImpl: (executable, args, options) => {
+      calls.push({ executable, args, options });
+      queueMicrotask(() => child.emit("exit", 0, null));
+      return child;
+    },
+  });
+  const threadId = "10000000-0000-0000-0000-000000000001";
+  assert.deepEqual(await wake.activate(threadId), { requested: true, threadId });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].executable, "codex.exe");
+  assert.deepEqual(calls[0].args, ["queue", "--thread", threadId, "--message", WAKE_PROMPT]);
+  assert.equal(calls[0].options.cwd, coreHome);
+  assert.equal(calls[0].args.some(value => /model|reasoning|effort/i.test(value)), false);
+});
+
+test("concurrent reconnect requests share one Codex queue operation", async () => {
+  const calls = [];
+  const child = fakeChild();
+  const wake = new CodexControllerWake({
+    coreHome: path.resolve("D:/CWC/runtime"),
+    resolveExecutable: () => "codex.exe",
     spawnImpl: (executable, args, options) => { calls.push({ executable, args, options }); return child; },
   });
   const threadId = "10000000-0000-0000-0000-000000000001";
-  assert.deepEqual(wake.activate(threadId), { requested: true, alreadyRunning: false, threadId });
+  const first = wake.activate(threadId);
+  const second = wake.activate(threadId);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].executable, "codex.exe");
-  assert.deepEqual(calls[0].args, ["exec", "resume", threadId, "--json", "--skip-git-repo-check", WAKE_PROMPT]);
-  assert.equal(calls[0].options.cwd, coreHome);
-  assert.equal(calls[0].options.env.CODEX_CHATGPT_WEB_HOME, coreHome);
-  assert.equal(calls[0].args.some(value => /model|reasoning|effort/i.test(value)), false);
-
-  assert.deepEqual(wake.activate(threadId), { requested: false, alreadyRunning: true, threadId });
-  assert.equal(calls.length, 1);
-
-  child.exitCode = 0;
   child.emit("exit", 0, null);
-  const second = fakeChild();
-  wake.spawnImpl = (executable, args, options) => { calls.push({ executable, args, options }); return second; };
-  assert.equal(wake.activate(threadId).requested, true);
-  assert.equal(calls.length, 2);
+  assert.deepEqual(await first, { requested: true, threadId });
+  assert.deepEqual(await second, { requested: true, threadId });
 });
 
-test("controller activation rejects malformed ids before starting Codex", () => {
+test("controller activation surfaces queue failure instead of pretending reconnect succeeded", async () => {
+  const child = fakeChild();
+  const wake = new CodexControllerWake({
+    coreHome: path.resolve("D:/CWC/runtime"),
+    resolveExecutable: () => "codex.exe",
+    spawnImpl: () => {
+      queueMicrotask(() => {
+        child.stderr.emit("data", Buffer.from("shared app-server unavailable\n"));
+        child.emit("exit", 1, null);
+      });
+      return child;
+    },
+  });
+  await assert.rejects(
+    () => wake.activate("10000000-0000-0000-0000-000000000001"),
+    /shared app-server unavailable/,
+  );
+});
+
+test("controller activation rejects malformed ids before starting Codex", async () => {
   let spawned = false;
   const wake = new CodexControllerWake({
     coreHome: path.resolve("D:/CWC/runtime"),
     resolveExecutable: () => "codex.exe",
     spawnImpl: () => { spawned = true; return fakeChild(); },
   });
-  assert.throws(() => wake.activate("not-a-thread"), /invalid/);
+  await assert.rejects(() => wake.activate("not-a-thread"), /invalid/);
   assert.equal(spawned, false);
 });
 

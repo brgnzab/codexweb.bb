@@ -47,6 +47,10 @@ function resolveCodexExecutable({
   throw new Error("Codex could not be found. Install/open Codex Desktop or set CODEX_CLI_PATH once, then reconnect the controller.");
 }
 
+function boundedOutput(chunks) {
+  return chunks.join("").trim().replace(/\s+/g, " ").slice(0, 1200);
+}
+
 class CodexControllerWake {
   constructor({ coreHome, logger, spawnImpl = spawn, resolveExecutable = resolveCodexExecutable } = {}) {
     if (!coreHome || !path.isAbsolute(coreHome)) throw new Error("Codex controller wake requires an absolute CWC runtime home");
@@ -54,39 +58,63 @@ class CodexControllerWake {
     this.logger = logger;
     this.spawnImpl = spawnImpl;
     this.resolveExecutable = resolveExecutable;
-    this.child = null;
+    this.pending = null;
   }
 
-  activate(rawThreadId) {
+  async activate(rawThreadId) {
     const threadId = String(rawThreadId || "").trim().toLowerCase();
     if (!CODEX_THREAD_ID.test(threadId)) throw new Error("Configured Codex Bridge Thread ID is invalid");
-    if (this.child && this.child.exitCode === null && this.child.signalCode === null) {
-      return { requested: false, alreadyRunning: true, threadId };
-    }
+    if (this.pending) return await this.pending;
 
+    this.pending = this.queue(threadId);
+    try { return await this.pending; }
+    finally { this.pending = null; }
+  }
+
+  async queue(threadId) {
     const executable = this.resolveExecutable();
-    const args = ["exec", "resume", threadId, "--json", "--skip-git-repo-check", WAKE_PROMPT];
-    const child = this.spawnImpl(executable, args, {
-      cwd: this.coreHome,
-      env: { ...process.env, CODEX_CHATGPT_WEB_HOME: this.coreHome },
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    if (!child || typeof child.once !== "function") throw new Error("Codex controller activation did not start");
-    this.child = child;
-
-    const release = () => { if (this.child === child) this.child = null; };
-    child.once("error", error => {
-      this.logger?.warn?.("codex.bridge_activation_failed", { message: error instanceof Error ? error.message : String(error) });
-      release();
-    });
-    child.once("exit", (code, signal) => {
-      this.logger?.info?.("codex.bridge_activation_exited", { code, signal });
-      release();
-    });
-    child.unref?.();
+    const args = ["queue", "--thread", threadId, "--message", WAKE_PROMPT];
     this.logger?.info?.("codex.bridge_activation_requested", { threadId });
-    return { requested: true, alreadyRunning: false, threadId };
+
+    return await new Promise((resolve, reject) => {
+      let child;
+      try {
+        child = this.spawnImpl(executable, args, {
+          cwd: this.coreHome,
+          env: { ...process.env },
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        });
+      } catch (error) {
+        reject(new Error(`Codex controller reconnect failed: ${error instanceof Error ? error.message : String(error)}`));
+        return;
+      }
+      if (!child || typeof child.once !== "function") {
+        reject(new Error("Codex controller reconnect failed: Codex did not start"));
+        return;
+      }
+
+      const stdout = [];
+      const stderr = [];
+      child.stdout?.on?.("data", chunk => stdout.push(String(chunk)));
+      child.stderr?.on?.("data", chunk => stderr.push(String(chunk)));
+      child.once("error", error => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger?.warn?.("codex.bridge_activation_failed", { message });
+        reject(new Error(`Codex controller reconnect failed: ${message}`));
+      });
+      child.once("exit", (code, signal) => {
+        if (code === 0) {
+          this.logger?.info?.("codex.bridge_activation_queued", { threadId });
+          resolve({ requested: true, threadId });
+          return;
+        }
+        const status = signal || (code ?? "unknown status");
+        const detail = boundedOutput(stderr) || boundedOutput(stdout) || `Codex exited with ${status}`;
+        this.logger?.warn?.("codex.bridge_activation_failed", { message: detail });
+        reject(new Error(`Codex controller reconnect failed: ${detail}`));
+      });
+    });
   }
 }
 
