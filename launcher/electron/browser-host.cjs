@@ -1244,7 +1244,7 @@ class BrowserHost {
       readyState: "unknown",
     }));
     let result = await probe(this.view.webContents);
-    if (!(result.composer && result.temporary && result.sessionAuthenticated)
+    if (!result.sessionAuthenticated
       && this.authView
       && !this.authView.webContents.isDestroyed()) {
       const authResult = await probe(this.authView.webContents);
@@ -1256,7 +1256,7 @@ class BrowserHost {
         result = await probe(this.view.webContents);
       }
     }
-    if (result.composer && result.temporary && result.sessionAuthenticated) {
+    if (result.sessionAuthenticated) {
       if (this.authView && !this.authView.webContents.isDestroyed()) {
         this.closeAuthView(this.authView, true, false);
       }
