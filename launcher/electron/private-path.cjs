@@ -2,14 +2,26 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-// A sensitive target itself must never be a link/reparse point. Ancestor junctions are allowed:
-// Windows installations commonly place application/profile trees below legitimate junctions.
-// The target's own protected DACL is still enforced/verified after traversal, so an ancestor
-// redirect cannot bypass the owner+SYSTEM permission boundary.
+// Existing sensitive targets may live below legitimate ancestor junctions, provided the target
+// itself is not a reparse point and its protected DACL is verified. Creating a NEW sensitive
+// target through a junction is different: the junction could redirect the write outside the
+// intended protected tree, so every existing ancestor on a creation path must be non-reparse.
 function assertNoReparsePath(value) {
   const absolute = path.resolve(value);
   const stat = fs.lstatSync(absolute, { throwIfNoEntry: false });
   if (stat?.isSymbolicLink()) throw new Error("Sensitive path contains a reparse point");
+  if (stat) return absolute;
+
+  let current = path.dirname(absolute);
+  while (true) {
+    const ancestor = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (ancestor) {
+      if (ancestor.isSymbolicLink()) throw new Error("Sensitive path contains a reparse point");
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
   return absolute;
 }
 
