@@ -265,6 +265,30 @@ describe("Native desktop adapter", () => {
       expect(() => assertReady(job, snapshot)).toThrow();
     }
   });
+  test("incomplete native baseline cannot cross the submitting boundary", async () => {
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" }); service.start(input());
+    const send = async (operation: string, body: any) => {
+      if (operation === "project-relay/claim") return service.claim(body.worker);
+      if (operation === "project-relay/list") return { relays: service.list() };
+      if (operation === "project-relay/submitting") { service.submitting(body.relay_id, body.delivery_id, body.lease, body.baseline_turn_id); return { accepted: true }; }
+      throw new Error("Unexpected operation");
+    };
+    const job: any = await bridgeRun({ operation: "claim" }, send, controllerId);
+    const base = { relay_id: job.relayId, delivery_id: job.deliveryId, lease: job.lease };
+    for (const mutate of [
+      (snapshot: any) => { delete snapshot.turns[0].items[0].output; },
+      (snapshot: any) => { snapshot.turns[0].items[0].output.truncated = true; },
+      (snapshot: any) => { snapshot.turns[0].items[0].truncated = true; },
+      (snapshot: any) => { snapshot.turns[0].truncated = true; },
+      (snapshot: any) => { snapshot.truncated = true; },
+    ]) {
+      const snapshot = delegated({ ...job, worker: controllerId }, answer(0));
+      mutate(snapshot);
+      await expect(bridgeRun({ operation: "prepare", ...base, snapshot }, send, controllerId)).rejects.toThrow();
+      expect(service.list()[0]!.turns[0]!.state).toBe("claimed");
+    }
+  });
+
   test("duplicate native inputs in one turn or multiple turns cannot correlate a receipt", () => {
     const job = { target: peer("codex", 0), worker: controllerId, prompt: "exact unique delivery" };
     for (const sameTurn of [true, false]) {

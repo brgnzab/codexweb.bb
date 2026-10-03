@@ -38,6 +38,10 @@ function assertReady(job, raw) {
   // that could never be read back in full, before crossing the send boundary.
   const envelope = `<codex_delegation>\n  <source_thread_id>${job.worker ?? "00000000-0000-0000-0000-000000000000"}</source_thread_id>\n  <input>${job.prompt}</input>\n</codex_delegation>`;
   if (envelope.length > 20000) throw new Error("Desktop delivery exceeds the native full-read limit; shorten the task or peer result before sending");
+  // A send is authorized only from a complete native read. This validation
+  // intentionally ignores prompt equality; identical text may be a later
+  // legitimate delivery, while incomplete evidence must fail closed.
+  deliveries(snapshot);
   const status = snapshot.thread.status?.type;
   if (!["idle", "notLoaded"].includes(status) || snapshot.turns.some(turn => !["completed", "failed", "interrupted"].includes(turn.status))) throw new Error("The bound desktop chat is busy or needs attention; do not send");
   const baselineTurnId = snapshot.turns.at(-1)?.id;
@@ -50,7 +54,8 @@ function completedAnswer(job, raw) {
     value.input.prompt === job.prompt
     && (!job.baselineTurnId || value.turn.id !== job.baselineTurnId)
   );
-  if (matching.length !== 1) throw new Error("Exact submitted prompt is missing or ambiguous after the submission baseline; do not forward or replay");
+  if (matching.length === 0) throw new Error("Exact submitted prompt is missing after the submission baseline; do not forward or replay");
+  if (matching.length > 1) throw new Error("Exact submitted prompt is duplicated after the submission baseline; do not forward or replay");
   if (matching[0].input.source && matching[0].input.source !== job.worker) throw new Error("Native delivery source does not match the controller that claimed it");
   const turn = matching[0].turn;
   if (turn.status !== "completed" || turn.error) throw new Error("The matching desktop turn has not completed successfully");
