@@ -30,6 +30,12 @@ function exact(value: unknown, keys: string[]): asserts value is Record<string, 
 function preSubmitFailureEvent(reason: string): string {
   return /composer did not preserve the complete prompt|prompt integrity/i.test(reason) ? "Composer integrity failure" : "Delivery failed before submit";
 }
+function repeatedExchange(turns: RelayTurn[]): boolean {
+  const completed = turns.filter(turn => turn.state === "completed" && typeof turn.answer === "string");
+  if (completed.length < 4) return false;
+  const last = completed.slice(-4);
+  return last[0]!.answer === last[2]!.answer && last[1]!.answer === last[3]!.answer;
+}
 const CODEX_THREAD_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 function codexThreadId(value: unknown): string {
   const id = text(value, "Codex Bridge Thread", 100).toLowerCase();
@@ -277,8 +283,8 @@ export class ProjectRelayService {
     if (session.turns.length >= session.maxTurns) {
       session.state = "blocked"; session.result = "Relay reached its owner-set turn budget."; this.mark(session, "Handoff limit reached"); return;
     }
-    if (session.turns.slice(-4).filter(item => item.answer === answer).length >= 3) {
-      session.state = "blocked"; session.result = "Repeated identical answers show no progress."; this.mark(session, "Repeated response blocked relay"); return;
+    if (repeatedExchange(session.turns)) {
+      session.state = "blocked"; session.result = "Repeated exchange shows no progress."; this.mark(session, "Repeated response blocked relay"); return;
     }
     session.state = "running";
     session.result = "Owner resumed the relay.";
@@ -300,8 +306,8 @@ export class ProjectRelayService {
       session.state = "uat-ready"; session.result = "Review complete; ready for owner UAT."; this.mark(session, "UAT ready");
     } else if (session.turns.length >= session.maxTurns) {
       session.state = "blocked"; session.result = "Relay reached its owner-set turn budget."; this.mark(session, "Handoff limit reached");
-    } else if (session.turns.slice(-4).filter(item => item.answer === answer).length >= 3) {
-      session.state = "blocked"; session.result = "Repeated identical answers show no progress."; this.mark(session, "Repeated response blocked relay");
+    } else if (repeatedExchange(session.turns)) {
+      session.state = "blocked"; session.result = "Repeated exchange shows no progress."; this.mark(session, "Repeated response blocked relay");
     } else {
       this.next(session, 1 - turn.peer, answer);
       this.mark(session, "Response received; next handoff queued");

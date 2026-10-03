@@ -93,6 +93,26 @@ describe("Existing-chat project routing", () => {
       expect(service.list()[0]!.state).toBe("blocked"); expect(service.claim("controller")).toBeNull();
     }
   });
+  test("third identical handoff is allowed; a repeated two-turn exchange is blocked", () => {
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
+    service.start({ ...input(), maxTurns: 10 });
+    for (const body of ["SAME", "SAME", "SAME"]) {
+      const job: any = service.claim("controller");
+      service.submitting(...ids(job));
+      service.finish(...ids(job), body, job.deliveryId);
+    }
+    let relay = service.list()[0]!;
+    expect(relay.state).toBe("running");
+    expect(relay.turns).toHaveLength(4);
+    expect(relay.turns[3]!.prompt).toBe("SAME");
+
+    const fourth: any = service.claim("controller");
+    service.submitting(...ids(fourth));
+    service.finish(...ids(fourth), "SAME", fourth.deliveryId);
+    relay = service.list()[0]!;
+    expect(relay.state).toBe("blocked");
+    expect(relay.event).toBe("Repeated response blocked relay");
+  });
   test("rejects destination injection, duplicate bindings and concurrent project reuse", () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
     expect(() => relayPeer({ ...peer("codex", 0), command: "arbitrary" })).toThrow();
