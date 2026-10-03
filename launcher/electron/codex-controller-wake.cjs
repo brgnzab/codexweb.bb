@@ -4,10 +4,10 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 
 const CODEX_THREAD_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-const WAKE_PROMPT = "Process the active CWC Project Relay queue using the existing CWC desktop controller procedure. Claim only CWC-prepared native deliveries, preserve the exact target and payload, send only after sendOnce:true, never replay submitted or uncertain deliveries, and keep polling while an active relay may still need native delivery. Stop when no active relay remains or CWC reports a blocker or UAT-ready result.";
+const WAKE_PROMPT = "Run CWC controller procedure; process relay queue; never replay submitted/uncertain.";
 
 function buildWakePrompt(coreHome) {
-  return `CWC runtime scope for this activation: ${coreHome}. This exact runtime home is authoritative for this activation. For every cwc-desktop-bridge.cjs helper call, set CODEX_CHATGPT_WEB_HOME exactly to this path before invoking the helper. Do not read, claim, reconcile, or modify relay state from any other CWC runtime/home. ${WAKE_PROMPT}`;
+  return `CODEX_CHATGPT_WEB_HOME=${coreHome}. ${WAKE_PROMPT}`;
 }
 
 function needsNativeRelay(peers) {

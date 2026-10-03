@@ -44,18 +44,15 @@ test("controller activation queues one message to the exact configured native th
   assert.equal(calls[0].executable, "codex.exe");
   assert.deepEqual(calls[0].args, ["queue", "--thread", threadId, "--message", buildWakePrompt(coreHome)]);
   assert.equal(calls[0].options.cwd, coreHome);
-  assert.match(calls[0].args.at(-1), new RegExp(coreHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(calls[0].args.at(-1), /Do not read, claim, reconcile, or modify relay state from any other CWC runtime\/home/);
+  assert.equal(calls[0].args.at(-1), `CODEX_CHATGPT_WEB_HOME=${coreHome}. ${WAKE_PROMPT}`);
   assert.equal(calls[0].args.some(value => /model|reasoning|effort/i.test(value)), false);
 });
 
 test("wake prompt scopes the controller to only the launcher runtime", () => {
   const coreHome = path.resolve("D:/CWC/isolated-candidate-runtime");
   const prompt = buildWakePrompt(coreHome);
-  assert.match(prompt, new RegExp(coreHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(prompt, /CODEX_CHATGPT_WEB_HOME exactly to this path/);
-  assert.match(prompt, /Do not read, claim, reconcile, or modify relay state from any other CWC runtime\/home/);
-  assert.match(prompt, new RegExp(WAKE_PROMPT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.equal(prompt, `CODEX_CHATGPT_WEB_HOME=${coreHome}. ${WAKE_PROMPT}`);
+  assert.match(prompt, /never replay submitted\/uncertain/);
 });
 
 test("concurrent reconnect requests share one Codex queue operation", async () => {
