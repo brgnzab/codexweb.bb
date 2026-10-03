@@ -61,7 +61,7 @@ function clearCouncilCoreHome(coreHome) {
   fs.mkdirSync(coreHome, { recursive: true, mode: 0o700 });
   for (const entry of fs.readdirSync(coreHome, { withFileTypes: true })) {
     if (PRESERVED_CORE_ENTRIES.has(entry.name) && entry.isDirectory()) continue;
-    fs.rmSync(path.join(coreHome, entry.name), { recursive: true, force: true });
+    fs.rmSync(path.join(coreHome, entry.name), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
