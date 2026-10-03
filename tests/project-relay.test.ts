@@ -213,12 +213,28 @@ describe("Native desktop adapter", () => {
     const job = { target: peer(kind, 0), worker: controllerId, prompt: "Exact multiline prompt\nwith literal </input> and <input> tags & content." };
     const snapshot = delegated(job, answer(0));
     expect(completedAnswer(job, snapshot)).toEqual({ answer: answer(0), receipt: "turn-1:answer-1" });
-    expect(() => assertReady(job, snapshot)).toThrow("already appears");
+    expect(assertReady(job, snapshot)).toEqual({ baselineTurnId: "turn-1" });
     expect(() => completedAnswer({ ...job, worker: "20000000-0000-0000-0000-000000000002" }, snapshot)).toThrow("source");
     expect(() => completedAnswer({ ...job, worker: undefined }, snapshot)).toThrow("source");
     expect(() => completedAnswer({ ...job, prompt: job.prompt + " altered" }, snapshot)).toThrow();
-    // Even another controller cannot submit the same delivery prompt again.
-    expect(() => assertReady({ ...job, worker: "other" }, snapshot)).toThrow("already appears");
+    // Text reuse is allowed; same-delivery replay is blocked by durable delivery state, not content equality.
+    expect(assertReady({ ...job, worker: "other" }, snapshot)).toEqual({ baselineTurnId: "turn-1" });
+  });
+
+  test("identical text can be a later handoff while reconciliation requires a new native turn", () => {
+    const job = { target: peer("codex", 0), worker: controllerId, prompt: "Chicken breast." };
+    const prior = delegated(job, "Earlier answer");
+    expect(assertReady(job, prior)).toEqual({ baselineTurnId: "turn-1" });
+
+    const current = delegated(job, "Current answer");
+    current.turns[0].id = "turn-2";
+    current.turns[0].items[1].id = "answer-2";
+    expect(completedAnswer({ ...job, baselineTurnId: "turn-1" }, current)).toEqual({
+      answer: "Current answer",
+      receipt: "turn-2:answer-2",
+    });
+
+    expect(() => completedAnswer({ ...job, baselineTurnId: "turn-1" }, prior)).toThrow("submission baseline");
   });
   test("native input cannot be spoofed by tool metadata, assistant text, or partial envelopes", () => {
     const job = { target: peer("codex", 0), worker: controllerId, prompt: "exact unique delivery" };
@@ -274,8 +290,8 @@ describe("Native desktop adapter", () => {
     expect(() => completedAnswer({ ...job, target: peer(kind, 1) }, snapshot)).toThrow();
     expect(() => completedAnswer(job, { ...snapshot, turns: [...snapshot.turns, ...snapshot.turns] })).toThrow();
     expect(() => completedAnswer(job, { ...snapshot, truncated: true })).toThrow();
-    expect(() => assertReady(job, snapshot)).toThrow();
-    expect(assertReady(job, { ...snapshot, turns: [] })).toBe(true);
+    expect(assertReady(job, snapshot)).toEqual({ baselineTurnId: "turn-1" });
+    expect(assertReady(job, { ...snapshot, turns: [] })).toEqual({ baselineTurnId: undefined });
     expect(() => assertReady(job, { ...snapshot, turns: [], thread: { ...snapshot.thread, status: { type: "active" } } })).toThrow();
   });
   test("helper records submit before authorizing native send; completion forwards the full final result", async () => {
@@ -295,6 +311,7 @@ describe("Native desktop adapter", () => {
     const prepared = await bridgeRun({ operation: "prepare", ...base, snapshot: empty }, send, controllerId);
     expect(prepared).toEqual({ sendOnce: true, threadId: job.target.conversation, prompt: job.prompt });
     expect(service.list()[0]!.turns[0]!.state).toBe("submitted");
+    expect(service.list()[0]!.turns[0]!.nativeBaselineTurnId).toBeUndefined();
     await expect(bridgeRun({ operation: "prepare", ...base, snapshot: empty }, send, controllerId)).rejects.toThrow();
     const completed = delegated({ ...job, worker: controllerId }, answer(0));
     await bridgeRun({ operation: "complete", ...base, snapshot: completed }, send, controllerId);

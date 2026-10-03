@@ -7,7 +7,7 @@ import { assertChatGptConversationUrl } from "./conversation-registry";
 export type RelayPeer = { name: string; kind: "gw" | "codex" | "work"; conversation: string };
 export type RelayState = "running" | "blocked" | "uncertain" | "failed" | "terminated" | "uat-ready" | "stopped" | "cancelled";
 type TurnState = "queued" | "claimed" | "submitted" | "completed" | "failed";
-export type RelayTurn = { id: string; peer: number; prompt: string; state: TurnState; answer?: string; signal?: string; lease?: string; worker?: string; claimedAt?: number; receipt?: string };
+export type RelayTurn = { id: string; peer: number; prompt: string; state: TurnState; answer?: string; signal?: string; lease?: string; worker?: string; claimedAt?: number; receipt?: string; nativeBaselineTurnId?: string };
 export type ProjectRelay = { id: string; requestId: string; name: string; task: string; peers: [RelayPeer, RelayPeer]; maxTurns: number; state: RelayState; turns: RelayTurn[]; result?: string; event?: string; createdAt: string; updatedAt?: string };
 export type RelayInput = { requestId: string; name: string; task: string; peers: [RelayPeer, RelayPeer]; maxTurns?: number; resumeId?: string };
 export interface RelayGwDriver { run(peer: RelayPeer, prompt: string, deliveryId: string, onPhase?: (phase: CouncilExecutionPhase) => void): Promise<string> }
@@ -83,6 +83,7 @@ export class ProjectRelayService {
       if (!Number.isInteger(session.maxTurns) || session.maxTurns < 2 || session.maxTurns > 100) throw new Error("Invalid stored relay budget");
       for (const turn of session.turns) {
         if (!turn || ![0, 1].includes(turn.peer) || typeof turn.id !== "string" || typeof turn.prompt !== "string" || !["queued", "claimed", "submitted", "completed", "failed"].includes(turn.state)) throw new Error("Invalid stored relay delivery");
+        if (turn.nativeBaselineTurnId !== undefined && (typeof turn.nativeBaselineTurnId !== "string" || !turn.nativeBaselineTurnId || turn.nativeBaselineTurnId.length > 200)) throw new Error("Invalid stored native submission baseline");
       }
     }
     for (const session of this.sessions) {
@@ -390,10 +391,12 @@ export class ProjectRelayService {
     if (!turn || !turn.lease || turn.lease !== lease) throw new Error("Stale desktop delivery lease");
     return { session, turn };
   }
-  submitting(relayId: string, deliveryId: string, lease: string): void {
+  submitting(relayId: string, deliveryId: string, lease: string, nativeBaselineTurnId?: string): void {
     const { session, turn } = this.claimed(relayId, deliveryId, lease);
     if (session.state !== "running" || turn.state !== "claimed") throw new Error("Desktop delivery cannot be submitted twice");
     if (this.now() - (turn.claimedAt ?? 0) > 120000) throw new Error("Desktop delivery lease expired before submission");
+    if (nativeBaselineTurnId !== undefined && (!nativeBaselineTurnId || nativeBaselineTurnId.length > 200)) throw new Error("Native submission baseline is invalid");
+    turn.nativeBaselineTurnId = nativeBaselineTurnId;
     turn.state = "submitted";
     this.mark(session, "Handoff submitted");
     this.persist();

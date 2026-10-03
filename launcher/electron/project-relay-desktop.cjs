@@ -40,13 +40,17 @@ function assertReady(job, raw) {
   if (envelope.length > 20000) throw new Error("Desktop delivery exceeds the native full-read limit; shorten the task or peer result before sending");
   const status = snapshot.thread.status?.type;
   if (!["idle", "notLoaded"].includes(status) || snapshot.turns.some(turn => !["completed", "failed", "interrupted"].includes(turn.status))) throw new Error("The bound desktop chat is busy or needs attention; do not send");
-  if (deliveries(snapshot).some(value => value.input.prompt === job.prompt)) throw new Error("This delivery already appears in the chat; do not send again");
-  return true;
+  const baselineTurnId = snapshot.turns.at(-1)?.id;
+  if (baselineTurnId !== undefined && (typeof baselineTurnId !== "string" || !baselineTurnId)) throw new Error("Desktop read is missing the baseline turn identity");
+  return { baselineTurnId };
 }
 function completedAnswer(job, raw) {
   const snapshot = validateTarget(job, raw);
-  const matching = deliveries(snapshot).filter(value => value.input.prompt === job.prompt);
-  if (matching.length !== 1) throw new Error("Exact submitted prompt is missing or duplicated in the desktop read; do not forward or replay");
+  const matching = deliveries(snapshot).filter(value =>
+    value.input.prompt === job.prompt
+    && (!job.baselineTurnId || value.turn.id !== job.baselineTurnId)
+  );
+  if (matching.length !== 1) throw new Error("Exact submitted prompt is missing or ambiguous after the submission baseline; do not forward or replay");
   if (matching[0].input.source && matching[0].input.source !== job.worker) throw new Error("Native delivery source does not match the controller that claimed it");
   const turn = matching[0].turn;
   if (turn.status !== "completed" || turn.error) throw new Error("The matching desktop turn has not completed successfully");

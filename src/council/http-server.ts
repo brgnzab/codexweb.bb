@@ -215,7 +215,7 @@ const OWNER_ROUTE_FIELDS: Readonly<Record<string, readonly string[]>> = Object.f
   "/api/owner/project-relay/start": ["requestId", "name", "task", "peers", "maxTurns", "resumeId"],
   "/api/owner/project-relay/cancel": ["relay_id"],
   "/api/owner/project-relay/claim": ["worker"],
-  "/api/owner/project-relay/submitting": ["relay_id", "delivery_id", "lease"],
+  "/api/owner/project-relay/submitting": ["relay_id", "delivery_id", "lease", "baseline_turn_id"],
   "/api/owner/project-relay/complete": ["relay_id", "delivery_id", "lease", "answer", "receipt"],
   "/api/owner/project-relay/fail": ["relay_id", "delivery_id", "lease", "reason"],
   "/api/owner/start-lead": ["conversation_url", "project_name"],
@@ -327,7 +327,11 @@ export function startCouncilHttpServer(
               if (operation === "claim") return ownerJson(relay.claim(ownerId(body, "worker")));
               if (["submitting", "complete", "fail"].includes(operation)) {
                 const ids = [ownerId(body, "relay_id"), ownerId(body, "delivery_id"), ownerId(body, "lease")] as const;
-                if (operation === "submitting") relay.submitting(...ids);
+                if (operation === "submitting") {
+                  const baseline = body.baseline_turn_id;
+                  if (baseline !== undefined && (typeof baseline !== "string" || !baseline || baseline.length > 200)) throw new Error("baseline_turn_id is invalid");
+                  relay.submitting(...ids, typeof baseline === "string" ? baseline : undefined);
+                }
                 if (operation === "complete") relay.finish(...ids, ownerString(body, "answer", 48000), ownerString(body, "receipt", 200));
                 if (operation === "fail") relay.fail(...ids, ownerString(body, "reason", 1000));
                 return ownerJson({ accepted: true });

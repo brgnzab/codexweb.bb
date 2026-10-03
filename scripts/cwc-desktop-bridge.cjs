@@ -26,11 +26,11 @@ async function run(request, send = ownerRequest, controllerId = process.env.CODE
   const turn = session?.turns.find(turn => turn.id === ids.delivery_id);
   if (!turn || turn.lease !== ids.lease) throw new Error("Desktop delivery lease does not match");
   if (!controllerId || turn.worker !== controllerId) throw new Error("This delivery belongs to a different controller; do not send or replay");
-  const job = { target: session.peers[turn.peer], prompt: turn.prompt, worker: turn.worker };
+  const job = { target: session.peers[turn.peer], prompt: turn.prompt, worker: turn.worker, baselineTurnId: turn.nativeBaselineTurnId };
   if (request.operation === "prepare") {
     if (turn.state !== "claimed") throw new Error("Delivery is no longer eligible to send; reconcile only");
-    assertReady(job, request.snapshot);
-    await send("project-relay/submitting", ids);
+    const { baselineTurnId } = assertReady(job, request.snapshot);
+    await send("project-relay/submitting", { ...ids, ...(baselineTurnId ? { baseline_turn_id: baselineTurnId } : {}) });
     return { sendOnce: true, threadId: job.target.conversation, prompt: job.prompt };
   }
   const result = completedAnswer(job, request.snapshot);
