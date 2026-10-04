@@ -96,6 +96,9 @@ const resolvedPaths = resolveCwcPaths({
   defaultCoreHome: path.join(os.homedir(), ".codex-chatgpt-web"),
 });
 const CORE_HOME = resolvedPaths.coreHome;
+// Keep every in-process Council client on the same resolved runtime home.
+// This is critical for portable builds, where owner-control.json lives under data/core.
+process.env.CODEX_CHATGPT_WEB_HOME = CORE_HOME;
 const BROWSER_DESCRIPTOR_PATH = path.join(CORE_HOME, "runtime", "launcher-browser.json");
 const BROWSER_HELPER_PATH = app.isPackaged
   ? path.join(process.resourcesPath, "runtime", "app", "browser-helper.cjs")
@@ -505,13 +508,19 @@ async function start() {
 
   councilConnectionSupervisor = new CouncilConnectionSupervisor({ logger, capabilities: () => councilCapabilities(stateStore), publish: state => send("launcher:council-runtime", state) });
   if (app.isPackaged) runtimeRootProvider();
+
+  const smoke = process.argv.includes("--launcher-smoke-test");
+  if (!smoke) {
+    // Show the launcher immediately; first-run browser/runtime preparation can continue behind it.
+    await loadRenderer(mainWindow);
+  }
+
   browserHost = new BrowserHost({ window: mainWindow, descriptorPath: BROWSER_DESCRIPTOR_PATH, automation: automationTransport.descriptor(), control: browserControl.descriptor(), getConnectorName: () => COUNCIL_CONNECTOR_NAME, helper: { executable: process.execPath, script: BROWSER_HELPER_PATH, executableHash: sha256(fs.readFileSync(process.execPath)), scriptHash: sha256(fs.readFileSync(BROWSER_HELPER_PATH)) }, logger, publishState: state => send("launcher:browser-state", state) });
   await browserHost.ready();
   if (freshBuild) await browserHost.clearCachePreservingSession();
   await browserHost.refreshAuthentication().catch(error => logger.warn("browser.session_refresh_failed", { message: error instanceof Error ? error.message : String(error) }));
   registerIpc({ logger, stateStore });
 
-  const smoke = process.argv.includes("--launcher-smoke-test");
   if (smoke) {
     await loadRenderer(mainWindow);
     const smokeRuntimeRoot = runtimeRootProvider();
@@ -536,7 +545,6 @@ async function start() {
   }
   councilConnectionSupervisor.start();
   const trayAvailable = createTray(logger); if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", showMainWindow);
-  await loadRenderer(mainWindow);
 
   app.on("activate", showMainWindow);
   app.on("before-quit", event => { if (exitCommitted) return; event.preventDefault(); void requestQuit(); });

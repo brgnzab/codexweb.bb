@@ -196,3 +196,32 @@ test("owner fallback aborts a stalled local owner request", async () => {
     );
   } finally { fixture.restore(); }
 });
+
+
+test("owner client follows a runtime home assigned after module load", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "council-owner-late-home-"));
+  const previous = process.env.CODEX_CHATGPT_WEB_HOME;
+  try {
+    process.env.CODEX_CHATGPT_WEB_HOME = root;
+    const dir = path.join(root, "council");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "owner-control.json"), JSON.stringify({
+      version: 1,
+      endpoint: "http://127.0.0.1:17842/api/owner",
+      token: "z".repeat(64),
+    }));
+    let authorization;
+    await codexBridgeStatus({
+      timeoutMs: 250,
+      fetchImpl: async (_url, options) => {
+        authorization = options.headers.authorization;
+        return { ok: true, status: 200, json: async () => ({ ok: true, result: { configuredThread: null, connected: true } }) };
+      },
+    });
+    assert.equal(authorization, `Bearer ${"z".repeat(64)}`);
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_CHATGPT_WEB_HOME;
+    else process.env.CODEX_CHATGPT_WEB_HOME = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

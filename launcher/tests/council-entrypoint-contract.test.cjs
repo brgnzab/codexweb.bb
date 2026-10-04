@@ -30,6 +30,11 @@ test("Electron starts normal Council sessions through the hardened entrypoint", 
   assert.match(entry, /setupCouncilMcp/);
   assert.match(entry, /launcher:council-bind-current-lead/);
   assert.match(entry, /COUNCIL_CONNECTOR_NAME/);
+  assert.match(entry, /process\.env\.CODEX_CHATGPT_WEB_HOME = CORE_HOME/);
+  assert.ok(
+    entry.indexOf("await loadRenderer(mainWindow);") < entry.indexOf("await browserHost.ready();"),
+    "normal startup must render the launcher before waiting on browser/runtime preparation",
+  );
   assert.doesNotMatch(entry, /require\("\.\/main\.cjs"\)/);
   assert.doesNotMatch(entry, /setupCore/);
   assert.doesNotMatch(entry, /setBridgeEnabled/);
