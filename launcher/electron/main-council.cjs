@@ -20,6 +20,7 @@ const {
   net: electronNet,
 } = require("electron");
 const { ensurePrivateDirectory } = require("./private-path.cjs");
+const { resolveCwcPaths } = require("./portable-paths.cjs");
 const { DebuggerTransport } = require("./debugger-transport.cjs");
 const { sha256 } = require("./runtime-integrity.cjs");
 const { trustedLauncherSender, installRendererCsp, rendererCsp } = require("./renderer-security.cjs");
@@ -86,9 +87,15 @@ const BrowserHost = createCouncilBrowserHostClass(browserHostModule.BrowserHost)
 const BrowserControlServer = createCouncilBrowserControlServerClass(controlServerModule.BrowserControlServer);
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const SOURCE_ROOT = path.resolve(__dirname, "../..");
-const CORE_HOME = process.env.CODEX_CHATGPT_WEB_HOME?.trim()
-  ? path.resolve(process.env.CODEX_CHATGPT_WEB_HOME.trim())
-  : path.join(os.homedir(), ".codex-chatgpt-web");
+const resolvedPaths = resolveCwcPaths({
+  isPackaged: app.isPackaged,
+  execPath: process.execPath,
+  launcherDataOverride: process.env.CODEX_WEB_GPT_LAUNCHER_DATA_DIR,
+  coreHomeOverride: process.env.CODEX_CHATGPT_WEB_HOME,
+  defaultLauncherData: path.join(app.getPath("appData"), "Codex Web GPT"),
+  defaultCoreHome: path.join(os.homedir(), ".codex-chatgpt-web"),
+});
+const CORE_HOME = resolvedPaths.coreHome;
 const BROWSER_DESCRIPTOR_PATH = path.join(CORE_HOME, "runtime", "launcher-browser.json");
 const BROWSER_HELPER_PATH = app.isPackaged
   ? path.join(process.resourcesPath, "runtime", "app", "browser-helper.cjs")
@@ -105,14 +112,18 @@ app.setName("CodexWeb Council");
 if (process.platform === "win32") app.setAppUserModelId("dev.codexwebgpt.launcher");
 // Keep the Electron browser profile for seamless ChatGPT login continuity. CWC work/runtime state
 // is build-scoped separately so a newly downloaded/head build starts clean without logging out.
-const configuredUserData = process.env.CODEX_WEB_GPT_LAUNCHER_DATA_DIR?.trim();
-const launcherUserData = configuredUserData ? path.resolve(configuredUserData) : path.join(app.getPath("appData"), "Codex Web GPT");
+const launcherUserData = resolvedPaths.launcherData;
 ensurePrivateDirectory(launcherUserData, { recursive: true });
 ensurePrivateDirectory(CORE_HOME, { recursive: true });
 // The trusted build reference lives inside application resources, separate from mutable data.
 if (app.isPackaged) ensurePrivateDirectory(path.dirname(app.getAppPath()), { recursive: true });
 if (process.platform !== "win32") fs.chmodSync(launcherUserData, 0o700);
 app.setPath("userData", launcherUserData);
+if (resolvedPaths.portableRoot) {
+  const portableLogs = path.join(launcherUserData, "logs");
+  ensurePrivateDirectory(portableLogs, { recursive: true });
+  app.setAppLogsPath(portableLogs);
+}
 const BUILD_MARKER_PATH = path.join(launcherUserData, "cwc-build.json");
 installProcessDiagnosticGuards({ filePath: path.join(launcherUserData, "logs", "process-stream-errors.log") });
 

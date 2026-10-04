@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, cwc-personal]
   pull_request:
 
 permissions:
@@ -40,13 +40,13 @@ jobs:
           path: launcher/artifacts/smoke-diagnostics-*.txt
           if-no-files-found: warn
           retention-days: 7
-      - name: Retain verified Electron package
+      - name: Retain verified portable package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: electron-Windows-X64-${{ github.sha }}
+          name: portable-Windows-X64-${{ github.sha }}
           path: |
-            launcher/artifacts/*.exe
-            launcher/artifacts/*.blockmap
+            launcher/artifacts/*-portable.zip
+            launcher/artifacts/*-portable.zip.sha256
           if-no-files-found: error
           retention-days: 7
 

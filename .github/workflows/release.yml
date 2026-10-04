@@ -84,16 +84,12 @@ jobs:
       - run: bun run verify
       - run: bun run app:package
       - run: bun run app:smoke
-      - name: Archive Windows runtime
-        shell: pwsh
-        run: Compress-Archive -Path launcher/build/runtime/* -DestinationPath codex-chatgpt-web-windows-amd64.zip
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-windows-x64
           path: |
-            codex-chatgpt-web-windows-amd64.zip
-            launcher/artifacts/*.exe
-            launcher/artifacts/*.blockmap
+            launcher/artifacts/*-portable.zip
+            launcher/artifacts/*-portable.zip.sha256
           if-no-files-found: error
 
   publish:

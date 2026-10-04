@@ -11,51 +11,11 @@ const launcherRoot = path.resolve(__dirname, "..");
 const artifactsDirectory = path.join(launcherRoot, "artifacts");
 const launcherManifest = JSON.parse(fs.readFileSync(path.join(launcherRoot, "package.json"), "utf8"));
 const expectedVersion = launcherManifest.version;
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-package-smoke-"));
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "cwc-portable-smoke-"));
+const extractionRoot = path.join(scratch, "extracted");
 const markerPath = path.join(scratch, "ready.json");
-const coreHome = path.join(scratch, "core-home");
-const launcherData = path.join(scratch, "launcher-data");
-const installRoot = path.join(process.env.LOCALAPPDATA || "", "Programs", launcherManifest.name);
 const DEFAULT_COMMAND_TIMEOUT_MS = 45_000;
-// A first packaged launch transactionally copies roughly 181 MB / 6k runtime files.
-// Antivirus and slower Windows storage can make that bounded cold install take several minutes.
 const COLD_RUNTIME_SMOKE_TIMEOUT_MS = 360_000;
-
-function boundedTail(filePath, maxChars = 6_000) {
-  try {
-    if (!fs.existsSync(filePath)) return "missing";
-    const text = fs.readFileSync(filePath, "utf8");
-    return text.slice(-maxChars).replace(/\s+$/g, "") || "empty";
-  } catch (error) {
-    return `unreadable:${error instanceof Error ? error.message : String(error)}`;
-  }
-}
-
-function diagnostics(result = {}) {
-  let installTree = "missing";
-  try { if (fs.existsSync(installRoot)) installTree = fs.readdirSync(installRoot).sort().join(", "); }
-  catch (error) { installTree = `unreadable:${error instanceof Error ? error.message : String(error)}`; }
-  return [
-    `platform=${process.platform}/${process.arch}`,
-    `expectedVersion=${expectedVersion}`,
-    `marker=${boundedTail(markerPath, 2_000)}`,
-    `stdout=${JSON.stringify(result.stdout?.slice(-4_000) || "")}`,
-    `stderr=${JSON.stringify(result.stderr?.slice(-4_000) || "")}`,
-    `launcherLog=${boundedTail(path.join(launcherData, "logs", "launcher.jsonl"))}`,
-    `fatalLog=${boundedTail(path.join(launcherData, "logs", "launcher-fatal.log"))}`,
-    `processLog=${boundedTail(path.join(launcherData, "logs", "process-stream-errors.log"))}`,
-    `installRoot=${installRoot}`,
-    `installTree=${installTree}`,
-  ].join("\n");
-}
-
-function persistDiagnostics(error, result = {}) {
-  try {
-    fs.mkdirSync(artifactsDirectory, { recursive: true });
-    const file = path.join(artifactsDirectory, `smoke-diagnostics-${process.platform}-${process.arch}.txt`);
-    fs.writeFileSync(file, `error=${error instanceof Error ? error.stack || error.message : String(error)}\n${diagnostics(result)}\n`, "utf8");
-  } catch {}
-}
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -67,10 +27,9 @@ function run(command, args, options = {}) {
   });
   if (result.error || result.status !== 0) {
     const detail = result.error?.message || result.stderr?.trim() || result.stdout?.trim() || `status ${result.status}`;
-    const error = new Error(`${command} failed: ${detail}\n${diagnostics(result)}`);
-    persistDiagnostics(error, result);
-    throw error;
+    throw new Error(`${command} failed: ${detail}`);
   }
+  return result;
 }
 
 function artifact(pattern, label) {
@@ -80,33 +39,53 @@ function artifact(pattern, label) {
 }
 
 try {
-  const installer = artifact(/-win-x64\.exe$/, "Windows installer");
-  run(installer, ["/S"], { timeout: 120_000 });
-  const executable = path.join(installRoot, `${launcherManifest.build.productName}.exe`);
-  if (!fs.existsSync(executable)) throw new Error(`Packaged launcher executable is missing: ${executable}`);
+  const portableZip = artifact(/-portable\.zip$/i, "portable Windows ZIP");
+  const powershell = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  fs.mkdirSync(extractionRoot, { recursive: true });
+  run(powershell, [
+    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+    "-Command", "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force",
+    portableZip, extractionRoot,
+  ]);
 
-  const env = {
-    ...process.env,
-    CODEX_WEB_GPT_LAUNCHER_DATA_DIR: launcherData,
-    CODEX_CHATGPT_WEB_HOME: coreHome,
-    CODEX_HOME: path.join(scratch, "codex-home"),
-    CODEX_WEB_GPT_SMOKE_FILE: markerPath,
-  };
-  run(executable, ["--launcher-smoke-test"], { env, timeout: COLD_RUNTIME_SMOKE_TIMEOUT_MS });
-  if (!fs.existsSync(markerPath)) throw new Error("Packaged launcher did not write its readiness marker");
+  const roots = fs.readdirSync(extractionRoot, { withFileTypes: true }).filter(entry => entry.isDirectory());
+  if (roots.length !== 1) throw new Error(`Portable archive must contain exactly one root folder; found ${roots.map(entry => entry.name).join(", ") || "none"}`);
+  const portableRoot = path.join(extractionRoot, roots[0].name);
+  const portableMarkerPath = path.join(portableRoot, "cwc-portable.json");
+  const portableMarker = JSON.parse(fs.readFileSync(portableMarkerPath, "utf8"));
+  if (portableMarker.schemaVersion !== 1 || portableMarker.mode !== "portable" || portableMarker.appVersion !== expectedVersion || portableMarker.dataDirectory !== "data") {
+    throw new Error(`Unexpected portable marker: ${JSON.stringify(portableMarker)}`);
+  }
+  const dataRoot = path.join(portableRoot, "data");
+  if (fs.existsSync(dataRoot)) throw new Error("Portable artifact must not ship prior user/session state");
+
+  const appExe = path.join(portableRoot, `${launcherManifest.build.productName}.exe`);
+  if (!fs.existsSync(appExe)) throw new Error(`Portable launcher executable is missing: ${appExe}`);
+
+  const env = { ...process.env, CODEX_WEB_GPT_SMOKE_FILE: markerPath };
+  delete env.CODEX_WEB_GPT_LAUNCHER_DATA_DIR;
+  delete env.CODEX_CHATGPT_WEB_HOME;
+  delete env.CODEX_HOME;
+  run(appExe, ["--launcher-smoke-test"], { cwd: portableRoot, env, timeout: COLD_RUNTIME_SMOKE_TIMEOUT_MS });
+
+  if (!fs.existsSync(markerPath)) throw new Error("Portable launcher did not write its readiness marker");
   const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
   if (marker.ok !== true || marker.packaged !== true || marker.runtimeVerified !== true || marker.version !== expectedVersion || marker.platform !== "win32") {
-    throw new Error(`Unexpected packaged launcher marker: ${JSON.stringify(marker)}`);
+    throw new Error(`Unexpected portable launcher marker: ${JSON.stringify(marker)}`);
+  }
+
+  const launcherData = path.join(dataRoot, "launcher");
+  const coreHome = path.join(dataRoot, "core");
+  if (!fs.existsSync(launcherData) || !fs.statSync(launcherData).isDirectory()) {
+    throw new Error(`Portable launcher data directory was not created beside the app: ${launcherData}`);
   }
   const installedRuntime = path.join(coreHome, "versions", `${expectedVersion}-win32-x64`);
   const installedManifest = JSON.parse(fs.readFileSync(path.join(installedRuntime, "manifest.json"), "utf8"));
   if (installedManifest.appVersion !== expectedVersion || installedManifest.platform !== "win32" || installedManifest.arch !== "x64" || !/^[a-f0-9]{64}$/.test(installedManifest.bundleId)) {
-    throw new Error(`Packaged launcher installed the wrong durable runtime: ${JSON.stringify(installedManifest)}`);
+    throw new Error(`Portable launcher installed the wrong local runtime: ${JSON.stringify(installedManifest)}`);
   }
-  process.stdout.write("PACKAGED_LAUNCHER_SMOKE_OK win32/x64\n");
-} catch (error) {
-  persistDiagnostics(error);
-  throw error;
+
+  process.stdout.write("PORTABLE_LAUNCHER_SMOKE_OK win32/x64\n");
 } finally {
   fs.rmSync(scratch, { recursive: true, force: true });
 }

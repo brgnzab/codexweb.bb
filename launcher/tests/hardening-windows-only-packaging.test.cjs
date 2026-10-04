@@ -17,6 +17,13 @@ test("launcher manifest exposes Windows packaging only", () => {
   assert.equal(manifest.scripts["package:mac"], undefined);
   assert.equal(manifest.scripts["package:linux"], undefined);
   assert.ok(manifest.build.win);
+  assert.equal(manifest.build.nsis, undefined);
+  assert.equal(manifest.build.win.target, undefined);
+  const packageScript = read(launcherRoot, "scripts", "package.cjs");
+  assert.match(packageScript, /"--dir"/);
+  assert.match(packageScript, /cwc-portable\.json/);
+  assert.match(packageScript, /-portable/);
+  assert.doesNotMatch(packageScript, /\bnsis\b/i);
   assert.equal(manifest.build.mac, undefined);
   assert.equal(manifest.build.linux, undefined);
 });
