@@ -507,19 +507,19 @@ async function start() {
   }
 
   councilConnectionSupervisor = new CouncilConnectionSupervisor({ logger, capabilities: () => councilCapabilities(stateStore), publish: state => send("launcher:council-runtime", state) });
-  if (app.isPackaged) runtimeRootProvider();
 
   const smoke = process.argv.includes("--launcher-smoke-test");
-  if (!smoke) {
-    // Show the launcher immediately; first-run browser/runtime preparation can continue behind it.
-    await loadRenderer(mainWindow);
-  }
-
   browserHost = new BrowserHost({ window: mainWindow, descriptorPath: BROWSER_DESCRIPTOR_PATH, automation: automationTransport.descriptor(), control: browserControl.descriptor(), getConnectorName: () => COUNCIL_CONNECTOR_NAME, helper: { executable: process.execPath, script: BROWSER_HELPER_PATH, executableHash: sha256(fs.readFileSync(process.execPath)), scriptHash: sha256(fs.readFileSync(BROWSER_HELPER_PATH)) }, logger, publishState: state => send("launcher:browser-state", state) });
+
+  // IPC must exist before the renderer mounts because CouncilApp requests launcher:snapshot
+  // immediately. Heavy packaged-runtime/browser initialization intentionally stays after first paint.
+  registerIpc({ logger, stateStore });
+  if (!smoke) await loadRenderer(mainWindow);
+
+  if (app.isPackaged) runtimeRootProvider();
   await browserHost.ready();
   if (freshBuild) await browserHost.clearCachePreservingSession();
   await browserHost.refreshAuthentication().catch(error => logger.warn("browser.session_refresh_failed", { message: error instanceof Error ? error.message : String(error) }));
-  registerIpc({ logger, stateStore });
 
   if (smoke) {
     await loadRenderer(mainWindow);
