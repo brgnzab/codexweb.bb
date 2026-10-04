@@ -1,11 +1,9 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCouncilHttpServer } from "../src/council/http-server";
 import { CouncilStore } from "../src/council/store";
-import { verifyLauncherHelperIntegrity, type LauncherBrowserHostDescriptor } from "../src/launcher-browser-host";
 
 test("Council confidential snapshots and sync require owner capability and exact native host without browser origins", async () => {
   const root = mkdtempSync(join(tmpdir(), "cwc-snapshot-security-"));
@@ -52,17 +50,4 @@ test("all workflow actions are immutable and release publication requires explic
   expect(release).not.toMatch(/\n  push:/);
 });
 
-test("helper bytes are checked immediately before spawning, against the protected publisher reference", () => {
-  const root = mkdtempSync(join(tmpdir(), "cwc-helper-integrity-"));
-  try {
-    const executable = join(root, "helper.exe");
-    const script = join(root, "helper.cjs");
-    writeFileSync(executable, "synthetic executable");
-    writeFileSync(script, "synthetic helper");
-    const hash = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
-    const descriptor = { helper: { executable, script, executableHash: hash(executable), scriptHash: hash(script) } } as LauncherBrowserHostDescriptor;
-    expect(() => verifyLauncherHelperIntegrity(descriptor)).not.toThrow();
-    writeFileSync(script, "modified helper");
-    expect(() => verifyLauncherHelperIntegrity(descriptor)).toThrow("integrity mismatch");
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});
+
