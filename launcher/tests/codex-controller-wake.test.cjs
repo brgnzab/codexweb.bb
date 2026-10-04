@@ -8,6 +8,7 @@ const {
   buildWakePrompt,
   needsNativeRelay,
   resolveCodexExecutable,
+  desktopCodexCandidates,
 } = require("../electron/codex-controller-wake.cjs");
 
 function fakeChild() {
@@ -102,16 +103,55 @@ test("controller activation rejects malformed ids before starting Codex", async 
   assert.equal(spawned, false);
 });
 
-test("explicit CODEX_CLI_PATH must be an existing absolute executable", () => {
+test("explicit CODEX_CLI_PATH must be an existing compatible absolute executable", () => {
   const expected = path.resolve("D:/Codex/codex.exe");
   assert.equal(resolveCodexExecutable({
     env: { CODEX_CLI_PATH: expected },
     exists: value => value === expected,
-    find: () => ({ status: 1, stdout: "" }),
+    find: (executable, args) => executable === expected && args[0] === "queue"
+      ? { status: 0, stdout: "--thread <THREAD> --message <TEXT>", stderr: "" }
+      : { status: 1, stdout: "", stderr: "" },
   }), expected);
   assert.throws(() => resolveCodexExecutable({
     env: { CODEX_CLI_PATH: "codex.exe" },
     exists: () => true,
-    find: () => ({ status: 1, stdout: "" }),
+    find: () => ({ status: 1, stdout: "", stderr: "" }),
   }), /must point to an existing Codex executable/);
+  assert.throws(() => resolveCodexExecutable({
+    env: { CODEX_CLI_PATH: expected },
+    exists: value => value === expected,
+    find: () => ({ status: 0, stdout: "Usage: codex queue <MESSAGE>", stderr: "" }),
+  }), /does not support controller queue delivery/);
+});
+
+test("Windows prefers the newest compatible Codex Desktop runtime over stale standalone CLI", () => {
+  const local = path.resolve("C:/Users/test/AppData/Local");
+  const root = path.join(local, "OpenAI", "Codex", "bin");
+  const newest = path.join(root, "bbbb2222", "codex.exe");
+  const older = path.join(root, "aaaa1111", "codex.exe");
+  const standalone = path.join(local, "Programs", "OpenAI", "Codex", "bin", "codex.exe");
+  const existing = new Set([root, newest, older, standalone]);
+  const entries = [
+    { name: "aaaa1111", isDirectory: () => true },
+    { name: "bbbb2222", isDirectory: () => true },
+  ];
+  const run = executable => {
+    if (executable === newest) return { status: 0, stdout: "--thread <THREAD> --message <TEXT>", stderr: "" };
+    if (executable === older || executable === standalone) return { status: 0, stdout: "Usage: codex queue <MESSAGE>", stderr: "" };
+    return { status: 1, stdout: "", stderr: "" };
+  };
+  assert.deepEqual(desktopCodexCandidates({
+    env: { LOCALAPPDATA: local },
+    exists: value => existing.has(value),
+    readDir: () => entries,
+    stat: value => ({ mtimeMs: value === newest ? 200 : 100 }),
+  }), [newest, older]);
+  assert.equal(resolveCodexExecutable({
+    env: { LOCALAPPDATA: local, SystemRoot: "C:/Windows" },
+    platform: "win32",
+    exists: value => existing.has(value),
+    readDir: () => entries,
+    stat: value => ({ mtimeMs: value === newest ? 200 : 100 }),
+    find: run,
+  }), newest);
 });
