@@ -52,7 +52,7 @@ try {
   run(powershell, [
     "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
     "-File", expandScript, portableZip, extractionRoot,
-  ]);
+  ], { timeout: 240_000 });
 
   const roots = fs.readdirSync(extractionRoot, { withFileTypes: true }).filter(entry => entry.isDirectory());
   if (roots.length !== 1) throw new Error(`Portable archive must contain exactly one root folder; found ${roots.map(entry => entry.name).join(", ") || "none"}`);
