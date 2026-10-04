@@ -16,7 +16,8 @@
     "package:win": "bun run build && bun run build:runtime && bun run scripts/package.cjs --win",
     "smoke:package": "bun run scripts/smoke-package.cjs",
     "test": "node scripts/test-active.cjs",
-    "start": "electron ."
+    "start": "electron .",
+    "validate:portable": "node scripts/validate-portable-package.cjs"
   },
   "dependencies": {
     "motion": "^12.42.2",
