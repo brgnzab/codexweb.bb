@@ -45,7 +45,7 @@ test("product CI and release build only Windows x64 artifacts", () => {
   assert.match(ci, /verify:\s*\n\s*runs-on: windows-latest/);
   assert.doesNotMatch(ci, /macos-15|ubuntu-latest, windows-latest|AppImage|\.dmg/);
   assert.match(release, /build:\s*[\s\S]*?runs-on: windows-latest/);
-  assert.match(release, /codex-chatgpt-web-windows-amd64\.zip/);
+  assert.match(release, /launcher\/artifacts\/\*-portable\.zip/);
   assert.doesNotMatch(release, /macos-15|AppImage|darwin-arm64|darwin-amd64|linux-amd64|\.dmg/);
 });
 
