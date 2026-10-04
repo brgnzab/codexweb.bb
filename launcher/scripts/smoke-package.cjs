@@ -42,10 +42,16 @@ try {
   const portableZip = artifact(/-portable\.zip$/i, "portable Windows ZIP");
   const powershell = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   fs.mkdirSync(extractionRoot, { recursive: true });
+  const expandScript = path.join(scratch, "expand.ps1");
+  fs.writeFileSync(expandScript, [
+    "param([string]$Source, [string]$Destination)",
+    "$ErrorActionPreference = 'Stop'",
+    "Expand-Archive -LiteralPath $Source -DestinationPath $Destination -Force",
+    "",
+  ].join("\r\n"), "utf8");
   run(powershell, [
     "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-    "-Command", "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force",
-    portableZip, extractionRoot,
+    "-File", expandScript, portableZip, extractionRoot,
   ]);
 
   const roots = fs.readdirSync(extractionRoot, { withFileTypes: true }).filter(entry => entry.isDirectory());

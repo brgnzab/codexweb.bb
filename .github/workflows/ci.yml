@@ -29,7 +29,18 @@ jobs:
       - name: Prepare AVX2-independent Windows runtime
         shell: pwsh
         run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.3.14 -GitHubEnv $env:GITHUB_ENV
-      - run: bun run verify
+      - name: Full source verification
+        if: github.ref == 'refs/heads/main'
+        run: bun run verify
+      - name: CWC Personal accepted-source gate
+        if: github.ref == 'refs/heads/cwc-personal'
+        shell: pwsh
+        run: |
+          bun test tests/project-relay.test.ts
+          bun run typecheck
+          bun run launcher:typecheck
+          bun run launcher:build
+          node --test launcher/tests/portable-package.test.cjs launcher/tests/hardening-windows-only-packaging.test.cjs launcher/tests/hardening-no-self-update.test.cjs
       - run: bun run app:package
       - run: bun run app:smoke
       - name: Retain packaged smoke diagnostics
