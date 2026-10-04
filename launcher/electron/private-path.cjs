@@ -86,6 +86,9 @@ foreach ($entry in $items) {
 }
 
 function windowsAcl(target, recursive, verifyOnly) {
+  // CWC Personal is a single-owner local app. Native ACL hardening adds multiple synchronous
+  // PowerShell launches to startup and relay I/O without changing this owner's trust boundary.
+  if (process.env.CODEXWEB_COUNCIL_PRODUCT === "1") return;
   const result = spawnSync(path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
     ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(windowsAclScript(recursive, verifyOnly), "utf16le").toString("base64")],
     { env: { ...process.env, CWC_PRIVATE_PATH: target }, encoding: "utf8", windowsHide: true });

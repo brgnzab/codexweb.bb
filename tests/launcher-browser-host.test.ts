@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { protectPrivatePath } from "../launcher/electron/private-path.cjs";
 import { afterEach, expect, test } from "bun:test";
 import { createServer } from "node:http";
@@ -36,9 +35,7 @@ function descriptorFile(controlEndpoint = "http://127.0.0.1:39111"): string {
     },
     helper: {
       executable: process.execPath,
-      executableHash: createHash("sha256").update(readFileSync(process.execPath)).digest("hex"),
       script: import.meta.path,
-      scriptHash: createHash("sha256").update(readFileSync(import.meta.path)).digest("hex"),
     },
     partition: "persist:codex-web-gpt-chatgpt",
     idleUrl: "about:blank#codex-web-gpt-browser-host",

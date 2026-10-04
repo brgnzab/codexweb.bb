@@ -33,11 +33,14 @@ test("Electron starts normal Council sessions through the hardened entrypoint", 
   assert.match(entry, /process\.env\.CODEX_CHATGPT_WEB_HOME = CORE_HOME/);
   const registerIpcAt = entry.indexOf("registerIpc({ logger, stateStore });");
   const loadRendererAt = entry.indexOf("if (!smoke) await loadRenderer(mainWindow);");
+  const initializeServicesAt = entry.indexOf("const initializeServices = async () =>");
   const packagedRuntimeAt = entry.indexOf("if (app.isPackaged) runtimeRootProvider();");
   const browserReadyAt = entry.indexOf("await browserHost.ready();");
   assert.ok(registerIpcAt >= 0 && registerIpcAt < loadRendererAt, "IPC must be registered before the renderer mounts");
+  assert.ok(loadRendererAt < initializeServicesAt, "normal startup must paint before relay-service initialization");
   assert.ok(loadRendererAt < packagedRuntimeAt, "normal startup must paint before packaged runtime installation");
   assert.ok(loadRendererAt < browserReadyAt, "normal startup must paint before browser readiness");
+  assert.doesNotMatch(entry, /sha256\(fs\.readFileSync\(process\.execPath\)\)/);
   assert.doesNotMatch(entry, /require\("\.\/main\.cjs"\)/);
   assert.doesNotMatch(entry, /setupCore/);
   assert.doesNotMatch(entry, /setBridgeEnabled/);

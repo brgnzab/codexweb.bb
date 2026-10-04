@@ -1,10 +1,9 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { expandUserPath } from "./config";
 import { processRunning } from "./process";
-import { assertNoReparsePath, verifyPrivatePath } from "../launcher/electron/private-path.cjs";
+import { verifyPrivatePath } from "../launcher/electron/private-path.cjs";
 
 export const LAUNCHER_BROWSER_HOST_KIND = "codex-web-gpt-launcher";
 
@@ -21,8 +20,6 @@ export interface LauncherBrowserHostDescriptor {
   helper: {
     executable: string;
     script: string;
-    executableHash: string;
-    scriptHash: string;
   };
   partition: string;
   idleUrl: string;
@@ -84,9 +81,6 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   if (!helperScript || !existsSync(helperScript)) {
     throw new Error("Launcher browser descriptor helper script does not exist");
   }
-  if (![descriptor.helper.executableHash, descriptor.helper.scriptHash].every(value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value))) {
-    throw new Error("Launcher browser helper integrity reference is missing");
-  }
   if (descriptor.partition !== "persist:codex-web-gpt-chatgpt") {
     throw new Error("Launcher browser descriptor identifies an unexpected browser partition");
   }
@@ -106,20 +100,12 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     endpoint,
     automationToken: descriptor.automationToken,
     control: { endpoint: controlEndpoint, token: descriptor.control.token },
-    helper: { executable: helperExecutable, script: helperScript, executableHash: descriptor.helper.executableHash, scriptHash: descriptor.helper.scriptHash },
+    helper: { executable: helperExecutable, script: helperScript },
     partition: descriptor.partition,
     idleUrl: descriptor.idleUrl,
     surfaceId: descriptor.surfaceId,
     createdAt: descriptor.createdAt,
   };
-}
-
-export function verifyLauncherHelperIntegrity(descriptor: LauncherBrowserHostDescriptor): void {
-  for (const [file, expected] of [[descriptor.helper.executable, descriptor.helper.executableHash], [descriptor.helper.script, descriptor.helper.scriptHash]]) {
-    assertNoReparsePath(file!);
-    const actual = createHash("sha256").update(readFileSync(file!)).digest("hex");
-    if (actual !== expected) throw new Error("Launcher browser helper content integrity mismatch");
-  }
 }
 
 export function readLauncherBrowserHostDescriptor(configuredPath: string): LauncherBrowserHostDescriptor {

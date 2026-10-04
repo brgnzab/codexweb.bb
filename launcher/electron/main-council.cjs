@@ -22,7 +22,6 @@ const {
 const { ensurePrivateDirectory } = require("./private-path.cjs");
 const { resolveCwcPaths } = require("./portable-paths.cjs");
 const { DebuggerTransport } = require("./debugger-transport.cjs");
-const { sha256 } = require("./runtime-integrity.cjs");
 const { trustedLauncherSender, installRendererCsp, rendererCsp } = require("./renderer-security.cjs");
 protocol.registerSchemesAsPrivileged([{ scheme: "cwc-app", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const browserHostModule = require("./browser-host.cjs");
@@ -317,10 +316,18 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:open-social", async (_event, target) => { if (target !== "github" && target !== "x") throw new Error("Unknown social target"); await openWebUrl(GITHUB_URL); return stateStore.update(target === "github" ? { githubOpened: true } : { xOpened: true }); });
   handle("launcher:complete-onboarding", (_event, language) => stateStore.update({ language: language === "zh-CN" ? "zh-CN" : "en", onboardingComplete: true, githubOpened: true, xOpened: true }));
   handle("launcher:open-external", async (_event, url) => { if (!ALLOWED_EXTERNAL_URLS.has(url)) throw new Error("External URL is not allowlisted"); await openWebUrl(url); return true; });
-  handle("launcher:browser-bounds", (_event, bounds) => { browserHost.setBounds(validateBounds(bounds)); return true; });
-  handle("launcher:browser-surface-active", (_event, active) => browserHost.setSurfaceActive(active === true));
-  handle("launcher:browser-show", () => browserHost.reveal());
-  handle("launcher:browser-hide", () => { browserHost.hide(); return browserHost.snapshot(); });
+  handle("launcher:browser-bounds", (_event, bounds) => {
+    if (!browserHost) return false;
+    browserHost.setBounds(validateBounds(bounds));
+    return true;
+  });
+  handle("launcher:browser-surface-active", (_event, active) => browserHost ? browserHost.setSurfaceActive(active === true) : null);
+  handle("launcher:browser-show", () => browserHost ? browserHost.reveal() : null);
+  handle("launcher:browser-hide", () => {
+    if (!browserHost) return null;
+    browserHost.hide();
+    return browserHost.snapshot();
+  });
   handle("launcher:browser-navigate", (_event, action) => browserHost.navigate(action));
   handle("launcher:browser-zoom", (_event, action) => browserHost.zoom(action));
   handle("launcher:browser-tab-select", (_event, tabId) => browserHost.selectTab(tabId));
@@ -492,36 +499,61 @@ async function start() {
   nativeTheme.themeSource = "system";
   mainWindow = createWindow({ logger, stateStore, startHidden });
   if (isDev) installRendererCsp(mainWindow.webContents.session, process.env.VITE_DEV_SERVER_URL, process.env.VITE_DEV_SERVER_URL);
-  automationTransport = await new DebuggerTransport({ getBrowserHost: () => browserHost }).start();
-  browserControl = await new BrowserControlServer({ logger, getBrowserHost: () => browserHost, getPreferences: () => stateStore.read() }).start();
-  runtimeSupervisor = new RuntimeSupervisor({ app, logger, sourceRoot: SOURCE_ROOT, installedRuntimeRoot, runtimeRootProvider, coreHome: CORE_HOME, browserDescriptorPath: BROWSER_DESCRIPTOR_PATH, publishOperation });
-  runtimeHost = new RuntimeHost({ app, logger, sourceRoot: SOURCE_ROOT, installedRuntimeRoot, runtimeRootProvider, browserDescriptorPath: BROWSER_DESCRIPTOR_PATH, publishOperation, supervisor: runtimeSupervisor });
-
-  const buildId = resolveBuildId({ app, resourcesPath: process.resourcesPath });
-  const previousBuild = readBuildMarker(BUILD_MARKER_PATH);
-  const freshBuild = previousBuild?.buildId !== buildId;
-  if (freshBuild) {
-    try { await runtimeSupervisor.shutdown(); } catch (error) { logger.warn("council.fresh_build_shutdown_failed", { message: error instanceof Error ? error.message : String(error) }); }
-    const prepared = prepareFreshBuild({ markerPath: BUILD_MARKER_PATH, buildId, coreHome: CORE_HOME, stateStore });
-    if (prepared.reset) logger.info("council.fresh_build_state_reset", { previousBuildId: prepared.previousBuildId, buildId });
-  }
 
   councilConnectionSupervisor = new CouncilConnectionSupervisor({ logger, capabilities: () => councilCapabilities(stateStore), publish: state => send("launcher:council-runtime", state) });
 
   const smoke = process.argv.includes("--launcher-smoke-test");
-  browserHost = new BrowserHost({ window: mainWindow, descriptorPath: BROWSER_DESCRIPTOR_PATH, automation: automationTransport.descriptor(), control: browserControl.descriptor(), getConnectorName: () => COUNCIL_CONNECTOR_NAME, helper: { executable: process.execPath, script: BROWSER_HELPER_PATH, executableHash: sha256(fs.readFileSync(process.execPath)), scriptHash: sha256(fs.readFileSync(BROWSER_HELPER_PATH)) }, logger, publishState: state => send("launcher:browser-state", state) });
 
-  // IPC must exist before the renderer mounts because CouncilApp requests launcher:snapshot
-  // immediately. Heavy packaged-runtime/browser initialization intentionally stays after first paint.
+  // The shell owns startup. Register its IPC first, paint immediately, then warm every relay
+  // dependency in the background so configuration is usable while services become ready.
   registerIpc({ logger, stateStore });
   if (!smoke) await loadRenderer(mainWindow);
 
-  if (app.isPackaged) runtimeRootProvider();
-  await browserHost.ready();
-  if (freshBuild) await browserHost.clearCachePreservingSession();
-  await browserHost.refreshAuthentication().catch(error => logger.warn("browser.session_refresh_failed", { message: error instanceof Error ? error.message : String(error) }));
+  const initializeServices = async () => {
+    [automationTransport, browserControl] = await Promise.all([
+      new DebuggerTransport({ getBrowserHost: () => browserHost }).start(),
+      new BrowserControlServer({ logger, getBrowserHost: () => browserHost, getPreferences: () => stateStore.read() }).start(),
+    ]);
+
+    runtimeSupervisor = new RuntimeSupervisor({ app, logger, sourceRoot: SOURCE_ROOT, installedRuntimeRoot, runtimeRootProvider, coreHome: CORE_HOME, browserDescriptorPath: BROWSER_DESCRIPTOR_PATH, publishOperation });
+    runtimeHost = new RuntimeHost({ app, logger, sourceRoot: SOURCE_ROOT, installedRuntimeRoot, runtimeRootProvider, browserDescriptorPath: BROWSER_DESCRIPTOR_PATH, publishOperation, supervisor: runtimeSupervisor });
+
+    const buildId = resolveBuildId({ app, resourcesPath: process.resourcesPath });
+    const previousBuild = readBuildMarker(BUILD_MARKER_PATH);
+    const freshBuild = previousBuild?.buildId !== buildId;
+    if (freshBuild) {
+      try { await runtimeSupervisor.shutdown(); } catch (error) { logger.warn("council.fresh_build_shutdown_failed", { message: error instanceof Error ? error.message : String(error) }); }
+      const prepared = prepareFreshBuild({ markerPath: BUILD_MARKER_PATH, buildId, coreHome: CORE_HOME, stateStore });
+      if (prepared.reset) logger.info("council.fresh_build_state_reset", { previousBuildId: prepared.previousBuildId, buildId });
+    }
+
+    browserHost = new BrowserHost({
+      window: mainWindow,
+      descriptorPath: BROWSER_DESCRIPTOR_PATH,
+      automation: automationTransport.descriptor(),
+      control: browserControl.descriptor(),
+      getConnectorName: () => COUNCIL_CONNECTOR_NAME,
+      helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
+      logger,
+      publishState: state => send("launcher:browser-state", state),
+    });
+
+    if (app.isPackaged) runtimeRootProvider();
+    await browserHost.ready();
+    if (freshBuild) await browserHost.clearCachePreservingSession();
+    await browserHost.refreshAuthentication().catch(error => logger.warn("browser.session_refresh_failed", { message: error instanceof Error ? error.message : String(error) }));
+
+    try {
+      await bootstrapCouncilRuntime({ stateStore, logger });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error("council.runtime_start_failed", { message });
+      publishOperation({ name: "runtime-start", status: "failed", message });
+    }
+  };
 
   if (smoke) {
+    await initializeServices();
     await loadRenderer(mainWindow);
     const smokeRuntimeRoot = runtimeRootProvider();
     if (app.isPackaged && !smokeRuntimeRoot) throw new Error("Packaged Council smoke test could not install its durable runtime");
@@ -536,15 +568,17 @@ async function start() {
     browserHost.destroy(); await browserControl.close(); mainWindow.destroy(); app.quit(); return;
   }
 
-  try {
-    await bootstrapCouncilRuntime({ stateStore, logger });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error("council.runtime_start_failed", { message });
-    publishOperation({ name: "runtime-start", status: "failed", message });
-  }
   councilConnectionSupervisor.start();
   const trayAvailable = createTray(logger); if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", showMainWindow);
+
+  // Yield the main process after first paint, then prewarm relay services automatically.
+  setTimeout(() => {
+    void initializeServices().catch(error => {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error("council.background_start_failed", { message });
+      publishOperation({ name: "runtime-start", status: "failed", message });
+    });
+  }, 0);
 
   app.on("activate", showMainWindow);
   app.on("before-quit", event => { if (exitCommitted) return; event.preventDefault(); void requestQuit(); });
