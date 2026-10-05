@@ -92,23 +92,23 @@ test("browser-only startup keeps Tunnel and full MCP optional while the Council 
   assert.equal(capabilities.fullMcp.state, "idle");
 });
 
-test("normal startup probes ChatGPT and starts the local Council runtime before showing the renderer", () => {
+test("normal startup paints the renderer before automatic infrastructure prewarm", () => {
   const entry = fs.readFileSync(path.join(root, "electron", "main-council.cjs"), "utf8");
   const startIndex = entry.indexOf("async function start()");
   const endIndex = entry.indexOf("\nvoid start().catch", startIndex);
   assert.ok(startIndex >= 0 && endIndex > startIndex);
   const startSource = entry.slice(startIndex, endIndex);
+  const ipc = startSource.indexOf("registerIpc({ logger, stateStore })");
+  const renderer = startSource.indexOf("if (!smoke) await loadRenderer(mainWindow)");
+  const initialize = startSource.indexOf("const initializeServices = async () =>");
+  const prewarm = startSource.indexOf("await runStartupPrewarm({");
   const ready = startSource.indexOf("await browserHost.ready()");
-  const cache = startSource.indexOf("if (freshBuild) await browserHost.clearCachePreservingSession()");
-  const authProbe = startSource.indexOf("await browserHost.refreshAuthentication()");
-  const bootstrap = startSource.indexOf("await bootstrapCouncilRuntime({ stateStore, logger })");
-  const supervisor = startSource.indexOf("councilConnectionSupervisor.start()");
-  const renderer = startSource.lastIndexOf("await loadRenderer(mainWindow)");
-  assert.ok(ready >= 0 && cache > ready && authProbe > cache && bootstrap > authProbe && supervisor > bootstrap && renderer > supervisor);
-  assert.match(entry, /prepareFreshBuild/);
+  const backgroundStart = startSource.lastIndexOf("void startInfrastructure().catch");
+  assert.ok(ipc >= 0 && renderer > ipc && initialize > renderer && prewarm > initialize && ready > prewarm && backgroundStart > ready);
+  assert.match(startSource, /councilConnectionSupervisor\.start\(\)/);
   assert.match(entry, /launcher:council-runtime-start/);
   assert.match(entry, /launcher:clear-cache/);
-  assert.match(entry, /Stop active relay work and reconcile any submitted delivery before clearing CWC cache/);
+  assert.match(entry, /Stop active relay work before clearing CWC cache/);
 });
 
 test("Clear cache preserves the ChatGPT login store and exposes all usability controls in-app", () => {
