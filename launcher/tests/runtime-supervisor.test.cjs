@@ -292,7 +292,7 @@ test("tunnel control failures preserve stderr even when stdout is also present",
   }
 });
 
-test("tunnel health diagnostics preserve the machine-readable readiness state", async () => {
+test("tunnel health preserves structured readiness while sanitizing diagnostic state", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-tunnel-health-detail-"));
   const supervisor = new RuntimeSupervisor({
     app: { getVersion: () => "0.2.0", isPackaged: false },
@@ -327,7 +327,7 @@ test("tunnel health diagnostics preserve the machine-readable readiness state", 
       healthy: false,
       absent: false,
       statusKnown: true,
-      detail: "state=stopped; process_running=false; healthy=false; ready=false; classification=stale_alias; live_admin=false; pid=missing",
+      detail: "state=[redacted] process_running=false; healthy=false; ready=false; classification=stale_alias; live_admin=false; pid=missing",
     });
     assert.deepEqual(commandArgs, ["runtimes", "cleanup", "--json"]);
   } finally {
@@ -362,7 +362,10 @@ test("tunnel failures surface a bounded summary instead of dumping the JSON payl
     const health = await supervisor.readTunnelHealth({
       tunnel: { alias: "codex-web-gpt" },
     });
-    assert.match(health.detail, /state=stopped/);
+    assert.equal(health.ready, false);
+    assert.equal(health.statusKnown, false);
+    assert.equal(health.state, undefined);
+    assert.match(health.detail, /state=\[redacted\]/);
     assert.match(health.detail, /runtime principal cannot use/);
     assert.doesNotMatch(health.detail, /"launch_diagnostics"/);
     assert.equal(health.detail.length <= 1_200, true);
@@ -406,7 +409,7 @@ test("tunnel readiness preserves a native managed process identity when one is r
       healthy: true,
       absent: false,
       statusKnown: true,
-      detail: "state=ready; process_running=true; healthy=true; ready=true; classification=active_runtime; live_admin=true; pid=123456779",
+      detail: "state=[redacted] process_running=true; healthy=true; ready=true; classification=active_runtime; live_admin=true; pid=123456779",
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

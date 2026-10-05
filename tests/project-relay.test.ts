@@ -93,6 +93,9 @@ describe("Existing-chat project routing", () => {
     blocked.submitting(...ids(blockedJob));
     blocked.finish(...ids(blockedJob), "Need owner credentials\nCWC_STATE: BLOCKED", blockedJob.deliveryId);
     expect(blocked.list()[0]!.state).toBe("blocked");
+    expect(blocked.list()[0]!.result).toBe("Participant reported a blocker.");
+    expect(blocked.list()[0]!.turns[0]!.answer).toBe("Need owner credentials\nCWC_STATE: BLOCKED");
+    expect(blocked.list()[0]!.turns).toHaveLength(1);
     expect(blocked.claim("controller")).toBeNull();
 
     const completed = new ProjectRelayService(join(root(), "relay-completed.json"), { run: async () => "unused" });
@@ -109,7 +112,11 @@ describe("Existing-chat project routing", () => {
     }
     expect(completed.list()[0]!.state).toBe("completed");
     expect(completed.list()[0]!.turns).toHaveLength(4);
+    expect(completed.list()[0]!.turns.every(turn => turn.state === "completed")).toBe(true);
     expect(completed.claim("controller")).toBeNull();
+    const next = completed.start({ ...input(), requestId: "after-budget", maxTurns: 4 });
+    expect(next.state).toBe("running");
+    completed.cancel(next.id);
   });
   test("UAT_READY on the final budgeted handoff takes precedence over COMPLETED", () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
@@ -141,6 +148,8 @@ describe("Existing-chat project routing", () => {
     service.resume(started.id);
     let relay = service.list()[0]!;
     expect(relay.state).toBe("running");
+    expect(relay.peers).toEqual(started.peers);
+    expect(relay.maxTurns).toBe(4);
     expect(relay.segmentStartTurn).toBe(4);
     expect(relay.turns).toHaveLength(5);
     for (const body of [

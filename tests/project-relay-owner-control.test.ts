@@ -4,6 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectRelayService, type RelayInput, type RelayPeer } from "../src/council/project-relay";
 
+const {
+  relayBlocksCacheClear,
+  restoreUncertainSubmissionTombstones,
+  uncertainSubmissionTombstones,
+} = require("../launcher/electron/project-relay-cache.cjs");
+
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const root = () => { const value = mkdtempSync(join(tmpdir(), "cwc-owner-control-")); roots.push(value); return value; };
@@ -88,6 +94,61 @@ describe("Owner lifecycle control", () => {
     });
     expect(unrelated.state).toBe("running");
     expect(service.list().find(relay => relay.id === started.id)!.state).toBe("uncertain");
+  });
+
+  test.each(["codex", "gw"] as const)("Clear Cache preserves terminal %s uncertainty without replay or claim across restart", async kind => {
+    const coreHome = root();
+    const path = join(coreHome, "council", "project-relays.json");
+    let browserCalls = 0;
+    const driver = { run: async (_target: RelayPeer, _prompt: string, _deliveryId: string, onPhase?: (phase: "submit-started") => void) => {
+      browserCalls++;
+      onPhase?.("submit-started");
+      throw new Error("connection lost after submit");
+    } };
+    const service = new ProjectRelayService(path, driver);
+    const started = service.start(input("before-clear", kind));
+    expect(relayBlocksCacheClear(service.list()[0])).toBe(true);
+    if (kind === "codex") {
+      const job: any = service.claim("controller");
+      expect(relayBlocksCacheClear(service.list()[0])).toBe(true);
+      service.submitting(...ids(job));
+      expect(relayBlocksCacheClear(service.list()[0])).toBe(true);
+      service.fail(...ids(job), "connection lost after submit");
+    } else {
+      await service.idle();
+    }
+    const submitted = service.list()[0]!.turns[0]!;
+    expect(browserCalls).toBe(kind === "gw" ? 1 : 0);
+    expect(relayBlocksCacheClear(service.list()[0])).toBe(false);
+
+    const tombstones = uncertainSubmissionTombstones(service.list());
+    rmSync(join(coreHome, "council"), { recursive: true, force: true });
+    expect(restoreUncertainSubmissionTombstones(coreHome, tombstones)).toBe(true);
+
+    const restored = new ProjectRelayService(path, driver);
+    restored.kick();
+    await restored.idle();
+    expect(browserCalls).toBe(kind === "gw" ? 1 : 0);
+    expect(restored.list()[0]).toMatchObject({ id: started.id, state: "uncertain" });
+    expect(restored.list()[0]!.turns).toHaveLength(1);
+    expect(restored.list()[0]!.turns[0]).toMatchObject({ id: submitted.id, state: "submitted", prompt: submitted.prompt });
+    expect(relayBlocksCacheClear(restored.list()[0])).toBe(false);
+    expect(restored.claim("controller")).toBeNull();
+    expect(() => restored.resume(started.id)).toThrow("exact-response reconciliation");
+    expect(() => restored.start(input("quarantined-after-clear", kind))).toThrow("submission quarantine");
+
+    const unrelated = restored.start({
+      ...input("unrelated-after-clear"),
+      peers: [
+        { ...peer("codex", 0), conversation: "00000000-0000-0000-0000-000000000007" },
+        { ...peer("work", 1), conversation: "00000000-0000-0000-0000-000000000008" },
+      ],
+    });
+    const next: any = restored.claim("controller");
+    expect(next.relayId).toBe(unrelated.id);
+    expect(next.deliveryId).not.toBe(submitted.id);
+    expect(restored.list().find(relay => relay.id === started.id)!.turns[0]!.state).toBe("submitted");
+    restored.cancel(unrelated.id);
   });
 
   test("restart marks an active relay terminated and only explicit Resume makes its queued delivery claimable", () => {
