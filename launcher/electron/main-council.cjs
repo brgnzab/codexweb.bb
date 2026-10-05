@@ -80,6 +80,11 @@ const {
   resetRuntimeFlags,
   resolveBuildId,
 } = require("./fresh-state.cjs");
+const {
+  relayBlocksCacheClear,
+  restoreUncertainSubmissionTombstones,
+  uncertainSubmissionTombstones,
+} = require("./project-relay-cache.cjs");
 const { MIN_WINDOW_BOUNDS, readWindowState, trackWindowState } = require("./window-state.cjs");
 
 const BrowserHost = createCouncilBrowserHostClass(browserHostModule.BrowserHost);
@@ -280,13 +285,15 @@ async function clearApplicationCache({ stateStore, logger }) {
     if (!isRuntimeUnavailable(error)) throw error;
   }
   const relays = Array.isArray(relaySnapshot?.relays) ? relaySnapshot.relays : [];
-  const unsafe = relays.find(relay => relay.state === "running" || relay.turns?.some(turn => turn.state === "claimed" || turn.state === "submitted"));
-  if (unsafe) throw new Error("Stop active relay work and reconcile any submitted delivery before clearing CWC cache");
+  const unsafe = relays.find(relayBlocksCacheClear);
+  if (unsafe) throw new Error("Stop active relay work before clearing CWC cache");
+  const relayTombstones = uncertainSubmissionTombstones(relays);
 
   publishOperation({ name: "clear-cache", status: "running", message: "Clearing local CWC work state and browser cache" });
   await councilConnectionSupervisor?.stop();
   await runtimeSupervisor?.shutdown();
   clearCouncilCoreHome(CORE_HOME);
+  restoreUncertainSubmissionTombstones(CORE_HOME, relayTombstones);
   const state = resetRuntimeFlags(stateStore);
   send("launcher:state-changed", state);
   await browserHost.clearCachePreservingSession();
