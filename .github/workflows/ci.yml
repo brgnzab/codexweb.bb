@@ -82,8 +82,13 @@ jobs:
           Set-Location $Workspace
           & $Node --test launcher/tests/startup-prewarm.test.cjs launcher/tests/project-relay-cache.test.cjs launcher/tests/codex-controller-wake.test.cjs launcher/tests/fresh-state.test.cjs launcher/tests/runtime-install.test.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $Bun run --cwd (Join-Path $Workspace "launcher") test
-          exit $LASTEXITCODE
+          Push-Location (Join-Path $Workspace "launcher")
+          try {
+            & $Node "scripts/test-active.cjs"
+            exit $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
           '@ | Set-Content -LiteralPath $qaScript -Encoding UTF8
           & icacls.exe $env:GITHUB_WORKSPACE /grant:r "${qaIdentity}:(OI)(CI)(RX)" /T /C /Q | Out-Null
           & icacls.exe $qaScript /grant:r "${qaIdentity}:(R)" /Q | Out-Null
