@@ -1,6 +1,5 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { createHash } = require("node:crypto");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 
 const BUILD_MARKER_VERSION = 1;
@@ -13,21 +12,21 @@ function normalizeBuildId(value) {
   return trimmed;
 }
 
-function hashFile(filePath) {
-  const hash = createHash("sha256");
-  hash.update(fs.readFileSync(filePath));
-  return hash.digest("hex");
-}
-
 function resolveBuildId({ app, resourcesPath, env = process.env }) {
   const sourceId = normalizeBuildId(env.CWC_BUILD_ID);
   if (sourceId) return `source:${sourceId}`;
 
   if (app?.isPackaged) {
-    const asarPath = path.join(resourcesPath, "app.asar");
-    if (fs.existsSync(asarPath) && fs.statSync(asarPath).isFile()) {
-      return `package:${app.getVersion()}:${hashFile(asarPath)}`;
+    const buildIdentityPath = path.join(resourcesPath, "build-id.json");
+    if (fs.existsSync(buildIdentityPath)) {
+      const identity = JSON.parse(fs.readFileSync(buildIdentityPath, "utf8"));
+      if (identity?.schemaVersion !== 1 || !/^[a-f0-9]{64}$/.test(identity?.buildId || "")) {
+        throw new Error("Packaged Council build identity is invalid");
+      }
+      return `package:${app.getVersion()}:${identity.buildId}`;
     }
+    // Compatibility fallback for packages created before build-id.json existed.
+    // This is still a small manifest read and never hashes app.asar at launch.
     const manifestPath = path.join(resourcesPath, "runtime", "manifest.json");
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
     if (!/^[a-f0-9]{64}$/.test(manifest?.bundleId || "")) {
