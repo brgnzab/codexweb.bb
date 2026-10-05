@@ -86,12 +86,62 @@ describe("Existing-chat project routing", () => {
     expect(service.list()[0]!.turns[0]!.signal).toBe("CONTINUE");
     expect(parseRelayAnswer("quoted\nCWC_STATE: UAT_READY\nmore\nCWC_STATE: UAT_READY").signal).toBe("CONTINUE");
   });
-  test("real blocker and turn budget stop forwarding", () => {
-    for (const reason of ["Need owner credentials\nCWC_STATE: BLOCKED", "progress\nCWC_STATE: CONTINUE"]) {
-      const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" }); service.start({ ...input(), maxTurns: 2 });
-      for (let i = 0; i < 2; i++) { const job: any = service.claim("controller"); if (!job) break; service.submitting(...ids(job)); service.finish(...ids(job), reason, job.deliveryId); }
-      expect(service.list()[0]!.state).toBe("blocked"); expect(service.claim("controller")).toBeNull();
+  test("explicit blocker stops forwarding while exact handoff budget completes successfully", () => {
+    const blocked = new ProjectRelayService(join(root(), "relay-blocked.json"), { run: async () => "unused" });
+    blocked.start({ ...input(), maxTurns: 2 });
+    const blockedJob: any = blocked.claim("controller");
+    blocked.submitting(...ids(blockedJob));
+    blocked.finish(...ids(blockedJob), "Need owner credentials\nCWC_STATE: BLOCKED", blockedJob.deliveryId);
+    expect(blocked.list()[0]!.state).toBe("blocked");
+    expect(blocked.claim("controller")).toBeNull();
+
+    const completed = new ProjectRelayService(join(root(), "relay-completed.json"), { run: async () => "unused" });
+    completed.start({ ...input(), requestId: "budget", maxTurns: 2 });
+    for (const body of ["first success\nCWC_STATE: CONTINUE", "second success\nCWC_STATE: CONTINUE"]) {
+      const job: any = completed.claim("controller");
+      completed.submitting(...ids(job));
+      completed.finish(...ids(job), body, job.deliveryId);
     }
+    expect(completed.list()[0]!.state).toBe("completed");
+    expect(completed.list()[0]!.turns).toHaveLength(2);
+    expect(completed.claim("controller")).toBeNull();
+  });
+  test("UAT_READY on the final budgeted handoff takes precedence over COMPLETED", () => {
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
+    service.start({ ...input(), maxTurns: 2 });
+    const first: any = service.claim("controller");
+    service.submitting(...ids(first));
+    service.finish(...ids(first), "implementation\nCWC_STATE: CONTINUE", first.deliveryId);
+    const second: any = service.claim("controller");
+    service.submitting(...ids(second));
+    service.finish(...ids(second), "review accepted\nCWC_STATE: UAT_READY", second.deliveryId);
+    expect(service.list()[0]!.state).toBe("uat-ready");
+    expect(service.list()[0]!.turns).toHaveLength(2);
+    expect(service.claim("controller")).toBeNull();
+  });
+  test("Resume on COMPLETED starts a fresh bounded segment instead of handoff N+1", () => {
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
+    const started = service.start({ ...input(), maxTurns: 2 });
+    for (const body of ["segment one A\nCWC_STATE: CONTINUE", "segment one B\nCWC_STATE: CONTINUE"]) {
+      const job: any = service.claim("controller");
+      service.submitting(...ids(job));
+      service.finish(...ids(job), body, job.deliveryId);
+    }
+    expect(service.list()[0]!.state).toBe("completed");
+    service.resume(started.id);
+    let relay = service.list()[0]!;
+    expect(relay.state).toBe("running");
+    expect(relay.segmentStartTurn).toBe(2);
+    expect(relay.turns).toHaveLength(3);
+    for (const body of ["segment two A\nCWC_STATE: CONTINUE", "segment two B\nCWC_STATE: CONTINUE"]) {
+      const job: any = service.claim("controller");
+      service.submitting(...ids(job));
+      service.finish(...ids(job), body, job.deliveryId);
+    }
+    relay = service.list()[0]!;
+    expect(relay.state).toBe("completed");
+    expect(relay.turns).toHaveLength(4);
+    expect(service.claim("controller")).toBeNull();
   });
   test("third identical handoff is allowed; a repeated two-turn exchange is blocked", () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
@@ -169,15 +219,59 @@ describe("Durability and no duplicate submissions", () => {
     expect(calls).toBe(0); expect(restored.list()[0]!.state).toBe("terminated");
     expect(() => restored.resume(restored.list()[0]!.id)).toThrow("exact-response reconciliation");
   });
-  test("stop during a submitted turn accepts its receipt without scheduling the peer until Resume", () => {
+  test("terminal submitted tombstone releases controller/global work but quarantines only its destination", () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
-    const session = service.start(input()); const job: any = service.claim("controller"); service.submitting(...ids(job)); service.cancel(session.id);
-    expect(service.claim("controller")).toMatchObject({ deliveryId: job.deliveryId, state: "submitted" });
-    expect(() => service.start({ ...input(), requestId: "another" })).toThrow();
+    const session = service.start(input());
+    const job: any = service.claim("controller");
+    service.submitting(...ids(job));
+    service.cancel(session.id);
+
+    expect(service.claim("controller")).toBeNull();
+    expect(() => service.resume(session.id)).toThrow("submitted delivery");
+    expect(() => service.start({
+      ...input(),
+      requestId: "quarantined",
+      peers: [peer("codex", 0), { ...peer("codex", 1), conversation: "00000000-0000-0000-0000-000000000009" }],
+    })).toThrow("submission quarantine");
+
+    const unrelated = service.start({
+      ...input(),
+      requestId: "unrelated",
+      peers: [
+        { ...peer("codex", 0), conversation: "00000000-0000-0000-0000-000000000007" },
+        { ...peer("work", 1), conversation: "00000000-0000-0000-0000-000000000008" },
+      ],
+    });
+    expect(unrelated.state).toBe("running");
+
     service.finish(...ids(job), answer(0), "receipt");
-    expect(service.list()[0]!.state).toBe("stopped"); expect(service.list()[0]!.turns).toHaveLength(1); expect(service.claim("controller")).toBeNull();
-    service.resume(session.id);
-    expect(service.list()[0]!.state).toBe("running"); expect(service.list()[0]!.turns).toHaveLength(2);
+    expect(service.list().find(relay => relay.id === session.id)!.state).toBe("stopped");
+    expect(service.list().find(relay => relay.id === session.id)!.turns).toHaveLength(1);
+  });
+  test("native UNCERTAIN is terminal, unclaimable and releases unrelated relays without replay", () => {
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
+    service.start(input());
+    const job: any = service.claim("controller");
+    service.submitting(...ids(job));
+    service.fail(...ids(job), "native completion could not be proven");
+    expect(service.list()[0]!.state).toBe("uncertain");
+    expect(service.list()[0]!.turns[0]!.state).toBe("submitted");
+    expect(service.claim("controller")).toBeNull();
+
+    const unrelated = service.start({
+      ...input(),
+      requestId: "fresh-relay",
+      peers: [
+        { ...peer("codex", 0), conversation: "00000000-0000-0000-0000-000000000005" },
+        { ...peer("work", 1), conversation: "00000000-0000-0000-0000-000000000006" },
+      ],
+    });
+    expect(unrelated.state).toBe("running");
+    expect(() => service.start({
+      ...input(),
+      requestId: "reuse-uncertain-target",
+      peers: [peer("codex", 0), { ...peer("work", 1), conversation: "00000000-0000-0000-0000-000000000004" }],
+    })).toThrow("submission quarantine");
   });
   test("driver error after actual submission becomes uncertain without a second attempt", async () => {
     let calls = 0;
@@ -185,6 +279,9 @@ describe("Durability and no duplicate submissions", () => {
     service.start(input("gw", "work")); await service.idle(); service.kick(); await service.idle();
     expect(calls).toBe(1); expect(service.list()[0]!.state).toBe("uncertain");
     expect(service.list()[0]!.turns.at(-1)!.state).toBe("submitted");
+    expect(service.claim("controller")).toBeNull();
+    expect(() => service.assertBrowserAccess(input("gw", "work").peers[0].conversation, "other-agent")).toThrow("submission tombstone");
+    expect(() => service.assertBrowserAccess("https://chatgpt.com/c/unrelated-after-uncertain", "other-agent")).not.toThrow();
   });
   test("pre-submit GW failure remains safely resumable and does not masquerade as uncertainty", async () => {
     let calls = 0;
@@ -209,22 +306,30 @@ describe("Durability and no duplicate submissions", () => {
 });
 
 describe("Native desktop adapter", () => {
-  test("helper derives claim identity from Codex and rejects mistyped or missing controller identity", async () => {
+  test("helper hides relay identifiers and derives controller identity from Codex", async () => {
     const calls: unknown[] = [];
-    const send = async (operation: string, body: unknown) => { calls.push({ operation, body }); return null; };
-    await bridgeRun({ operation: "claim" }, send, controllerId);
-    expect(calls).toEqual([{ operation: "project-relay/claim", body: { worker: controllerId } }]);
-    await expect(bridgeRun({ operation: "claim", worker: "20000000-0000-0000-0000-000000000002" }, send, controllerId)).rejects.toThrow("must match");
-    await expect(bridgeRun({ operation: "claim", worker: controllerId }, send, "")).rejects.toThrow("CODEX_THREAD_ID");
-    expect(calls).toHaveLength(1);
+    const claimed = { target: peer("codex", 0), prompt: "exact payload", relayId: "hidden-relay", deliveryId: "hidden-delivery", lease: "hidden-lease" };
+    const send = async (operation: string, body?: unknown) => {
+      calls.push({ operation, body });
+      if (operation === "project-relay/list") return { relays: [] };
+      if (operation === "project-relay/claim") return claimed;
+      throw new Error("Unexpected operation");
+    };
+    expect(await bridgeRun({ operation: "claim" }, send, controllerId)).toEqual({ threadId: claimed.target.conversation, prompt: claimed.prompt });
+    expect(calls).toEqual([
+      { operation: "project-relay/list", body: undefined },
+      { operation: "project-relay/claim", body: { worker: controllerId } },
+    ]);
+    await expect(bridgeRun({ operation: "claim", worker: controllerId }, send, controllerId)).rejects.toThrow("Invalid desktop bridge request");
+    await expect(bridgeRun({ operation: "claim" }, send, "")).rejects.toThrow("CODEX_THREAD_ID");
   });
   test("oversized desktop input is blocked before submit rather than becoming unreadable", async () => {
     const job = { target: peer("codex", 0), worker: controllerId, prompt: "x".repeat(20000) };
     expect(() => assertReady(job, { ...native(job, ""), turns: [] })).toThrow("full-read limit");
     let submitted = false;
-    const request = { operation: "prepare", relay_id: "relay", delivery_id: "delivery", lease: "lease", snapshot: { ...native(job, ""), turns: [] } };
+    const request = { operation: "prepare", snapshot: { ...native(job, ""), turns: [] } };
     await expect(bridgeRun(request, async (operation: string) => {
-      if (operation === "project-relay/list") return { relays: [{ id: "relay", peers: [job.target], turns: [{ id: "delivery", peer: 0, lease: "lease", worker: controllerId, prompt: job.prompt, state: "claimed" }] }] };
+      if (operation === "project-relay/list") return { relays: [{ id: "relay", state: "running", peers: [job.target], turns: [{ id: "delivery", peer: 0, lease: "lease", worker: controllerId, prompt: job.prompt, state: "claimed" }] }] };
       submitted = true; throw new Error("Must not reach submission");
     }, controllerId)).rejects.toThrow("full-read limit");
     expect(submitted).toBe(false);
@@ -293,8 +398,10 @@ describe("Native desktop adapter", () => {
       if (operation === "project-relay/submitting") { service.submitting(body.relay_id, body.delivery_id, body.lease, body.baseline_turn_id); return { accepted: true }; }
       throw new Error("Unexpected operation");
     };
-    const job: any = await bridgeRun({ operation: "claim" }, send, controllerId);
-    const base = { relay_id: job.relayId, delivery_id: job.deliveryId, lease: job.lease };
+    await bridgeRun({ operation: "claim" }, send, controllerId);
+    const claimed = service.list()[0]!;
+    const claimedTurn = claimed.turns.at(-1)!;
+    const job: any = { target: claimed.peers[claimedTurn.peer]!, prompt: claimedTurn.prompt, worker: controllerId };
     for (const mutate of [
       (snapshot: any) => { delete snapshot.turns[0].items[0].output; },
       (snapshot: any) => { snapshot.turns[0].items[0].output.truncated = true; },
@@ -304,7 +411,7 @@ describe("Native desktop adapter", () => {
     ]) {
       const snapshot = delegated({ ...job, worker: controllerId }, answer(0));
       mutate(snapshot);
-      await expect(bridgeRun({ operation: "prepare", ...base, snapshot }, send, controllerId)).rejects.toThrow();
+      await expect(bridgeRun({ operation: "prepare", snapshot }, send, controllerId)).rejects.toThrow();
       expect(service.list()[0]!.turns[0]!.state).toBe("claimed");
     }
   });
@@ -347,19 +454,21 @@ describe("Native desktop adapter", () => {
       if (operation === "project-relay/complete") { service.finish(body.relay_id, body.delivery_id, body.lease, body.answer, body.receipt); return { accepted: true }; }
       throw new Error("Unexpected operation");
     };
-    const job = await bridgeRun({ operation: "claim" }, send, controllerId);
-    const base = { relay_id: job.relayId, delivery_id: job.deliveryId, lease: job.lease };
+    await bridgeRun({ operation: "claim" }, send, controllerId);
+    const claimed = service.list()[0]!;
+    const claimedTurn = claimed.turns.at(-1)!;
+    const job = { target: claimed.peers[claimedTurn.peer]!, prompt: claimedTurn.prompt, worker: controllerId };
     const empty = { ...native(job, ""), turns: [] };
-    await expect(bridgeRun({ operation: "prepare", ...base, snapshot: empty }, send, "20000000-0000-0000-0000-000000000002")).rejects.toThrow("different controller");
+    await expect(bridgeRun({ operation: "prepare", snapshot: empty }, send, "20000000-0000-0000-0000-000000000002")).rejects.toThrow();
     expect(service.list()[0]!.turns[0]!.state).toBe("claimed");
-    const prepared = await bridgeRun({ operation: "prepare", ...base, snapshot: empty }, send, controllerId);
-    expect(prepared).toEqual({ sendOnce: true, threadId: job.target.conversation, prompt: job.prompt });
+    const prepared = await bridgeRun({ operation: "prepare", snapshot: empty }, send, controllerId);
+    expect(prepared).toEqual({ threadId: job.target.conversation, prompt: job.prompt });
     expect(service.list()[0]!.turns[0]!.state).toBe("submitted");
     expect(service.list()[0]!.turns[0]!.nativeBaselineTurnId).toBeUndefined();
-    await expect(bridgeRun({ operation: "prepare", ...base, snapshot: empty }, send, controllerId)).rejects.toThrow();
-    const completed = delegated({ ...job, worker: controllerId }, answer(0));
-    await bridgeRun({ operation: "complete", ...base, snapshot: completed }, send, controllerId);
-    await bridgeRun({ operation: "complete", ...base, snapshot: completed }, send, controllerId);
+    await expect(bridgeRun({ operation: "prepare", snapshot: empty }, send, controllerId)).rejects.toThrow("submission boundary");
+    const completed = delegated(job, answer(0));
+    await bridgeRun({ operation: "complete", snapshot: completed }, send, controllerId);
+    await bridgeRun({ operation: "complete", snapshot: completed }, send, controllerId);
     expect(service.list()[0]!.turns).toHaveLength(2);
     expect(service.list()[0]!.turns[1]!.prompt).toBe(answer(0));
   });
