@@ -96,14 +96,19 @@ describe("Existing-chat project routing", () => {
     expect(blocked.claim("controller")).toBeNull();
 
     const completed = new ProjectRelayService(join(root(), "relay-completed.json"), { run: async () => "unused" });
-    completed.start({ ...input(), requestId: "budget", maxTurns: 2 });
-    for (const body of ["first success\nCWC_STATE: CONTINUE", "second success\nCWC_STATE: CONTINUE"]) {
+    completed.start({ ...input(), requestId: "budget", maxTurns: 4 });
+    for (const body of [
+      "first success\nCWC_STATE: CONTINUE",
+      "second success\nCWC_STATE: CONTINUE",
+      "third success\nCWC_STATE: CONTINUE",
+      "fourth success\nCWC_STATE: CONTINUE",
+    ]) {
       const job: any = completed.claim("controller");
       completed.submitting(...ids(job));
       completed.finish(...ids(job), body, job.deliveryId);
     }
     expect(completed.list()[0]!.state).toBe("completed");
-    expect(completed.list()[0]!.turns).toHaveLength(2);
+    expect(completed.list()[0]!.turns).toHaveLength(4);
     expect(completed.claim("controller")).toBeNull();
   });
   test("UAT_READY on the final budgeted handoff takes precedence over COMPLETED", () => {
@@ -121,8 +126,13 @@ describe("Existing-chat project routing", () => {
   });
   test("Resume on COMPLETED starts a fresh bounded segment instead of handoff N+1", () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
-    const started = service.start({ ...input(), maxTurns: 2 });
-    for (const body of ["segment one A\nCWC_STATE: CONTINUE", "segment one B\nCWC_STATE: CONTINUE"]) {
+    const started = service.start({ ...input(), maxTurns: 4 });
+    for (const body of [
+      "segment one A\nCWC_STATE: CONTINUE",
+      "segment one B\nCWC_STATE: CONTINUE",
+      "segment one C\nCWC_STATE: CONTINUE",
+      "segment one D\nCWC_STATE: CONTINUE",
+    ]) {
       const job: any = service.claim("controller");
       service.submitting(...ids(job));
       service.finish(...ids(job), body, job.deliveryId);
@@ -131,16 +141,21 @@ describe("Existing-chat project routing", () => {
     service.resume(started.id);
     let relay = service.list()[0]!;
     expect(relay.state).toBe("running");
-    expect(relay.segmentStartTurn).toBe(2);
-    expect(relay.turns).toHaveLength(3);
-    for (const body of ["segment two A\nCWC_STATE: CONTINUE", "segment two B\nCWC_STATE: CONTINUE"]) {
+    expect(relay.segmentStartTurn).toBe(4);
+    expect(relay.turns).toHaveLength(5);
+    for (const body of [
+      "segment two A\nCWC_STATE: CONTINUE",
+      "segment two B\nCWC_STATE: CONTINUE",
+      "segment two C\nCWC_STATE: CONTINUE",
+      "segment two D\nCWC_STATE: CONTINUE",
+    ]) {
       const job: any = service.claim("controller");
       service.submitting(...ids(job));
       service.finish(...ids(job), body, job.deliveryId);
     }
     relay = service.list()[0]!;
     expect(relay.state).toBe("completed");
-    expect(relay.turns).toHaveLength(4);
+    expect(relay.turns).toHaveLength(8);
     expect(service.claim("controller")).toBeNull();
   });
   test("third identical handoff is allowed; a repeated two-turn exchange is blocked", () => {
@@ -467,8 +482,8 @@ describe("Native desktop adapter", () => {
     expect(service.list()[0]!.turns[0]!.nativeBaselineTurnId).toBeUndefined();
     await expect(bridgeRun({ operation: "prepare", snapshot: empty }, send, controllerId)).rejects.toThrow("submission boundary");
     const completed = delegated(job, answer(0));
-    await bridgeRun({ operation: "complete", snapshot: completed }, send, controllerId);
-    await bridgeRun({ operation: "complete", snapshot: completed }, send, controllerId);
+    expect(await bridgeRun({ operation: "complete", snapshot: completed }, send, controllerId)).toBeUndefined();
+    expect(await bridgeRun({ operation: "complete", snapshot: completed }, send, controllerId)).toBeUndefined();
     expect(service.list()[0]!.turns).toHaveLength(2);
     expect(service.list()[0]!.turns[1]!.prompt).toBe(answer(0));
   });
