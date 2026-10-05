@@ -45,7 +45,10 @@ test("hardened launcher validates both configurable state roots before loading C
 test("Windows package inputs are static allowlists and never include mutable user state", () => {
   const manifest = JSON.parse(read("launcher/package.json"));
   assert.deepEqual(manifest.build.files, ["dist/**", "electron/**", "assets/icon.png", "package.json"]);
-  assert.deepEqual(manifest.build.extraResources, [{ from: "build/runtime", to: "runtime" }]);
+  assert.deepEqual(manifest.build.extraResources, [
+    { from: "build/runtime", to: "runtime" },
+    { from: "build/build-id.json", to: "build-id.json" },
+  ]);
   const serialized = JSON.stringify({ files: manifest.build.files, extraResources: manifest.build.extraResources }).toLowerCase();
   for (const forbidden of [".cwc-data", ".codex-chatgpt-web", "storage-state", "cookies", "local storage", "session storage", "launcher-state", "owner-control"]) {
     assert.equal(serialized.includes(forbidden), false, `package input must not include ${forbidden}`);
