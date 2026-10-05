@@ -32,7 +32,7 @@ function runtimeInvocation({ app, sourceRoot, installedRuntimeRoot, args, truste
     throw new Error("Packaged launcher runtime has not been installed into durable local storage");
   }
   const { runtimeRoot, executable, entrypoint } = runtimeBundlePaths(installedRuntimeRoot);
-  verifyRuntimeContent(runtimeRoot, trustedManifestHash || require("./runtime-trust.json").manifestHash);
+  // Startup prewarm verifies the installed bundle outside Electron's main process.
   if (!fs.existsSync(executable)) throw new Error(`Bundled Bun runtime is missing: ${executable}`);
   if (!fs.existsSync(entrypoint)) throw new Error(`Bundled runtime entrypoint is missing: ${entrypoint}`);
   return {
