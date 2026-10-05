@@ -18,10 +18,14 @@ function run() {
   if (input.packaged === true) {
     if (typeof input.version !== "string" || !input.version) throw new Error("Startup prewarm app version is invalid");
     if (typeof input.resourcesPath !== "string" || !input.resourcesPath) throw new Error("Startup prewarm resources path is invalid");
+    if (input.trustedManifestHash !== undefined && !/^[a-f0-9]{64}$/.test(input.trustedManifestHash)) {
+      throw new Error("Startup prewarm trusted manifest hash is invalid");
+    }
     installedRuntimeRoot = ensurePackagedRuntime({
       app: { isPackaged: true, getVersion: () => input.version },
       coreHome: input.coreHome,
       resourcesPath: input.resourcesPath,
+      ...(input.trustedManifestHash ? { trustedManifestHash: input.trustedManifestHash } : {}),
       verifyInstalled: true,
     });
   }
