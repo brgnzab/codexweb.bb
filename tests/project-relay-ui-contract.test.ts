@@ -5,9 +5,11 @@ import { join } from "node:path";
 const panel = readFileSync(join(import.meta.dir, "..", "launcher", "src", "ProjectRelayPanel.tsx"), "utf8");
 const app = readFileSync(join(import.meta.dir, "..", "launcher", "src", "CouncilApp.tsx"), "utf8");
 
-test("active and unresolved relays expose Stop relay owner control", () => {
-  expect(panel).toContain('const stoppableRelay = (relay: ProjectRelayView) => !["uat-ready", "stopped", "cancelled"].includes(relay.state);');
+test("only nonterminal relay states expose Stop while completed segments remain resumable", () => {
+  expect(panel).toContain('const stoppableRelay = (relay: ProjectRelayView) => !["completed", "uat-ready", "stopped", "cancelled"].includes(relay.state);');
+  expect(panel).toContain('if (relay.state === "completed") return "Handoff segment completed";');
   expect(panel).toContain('{stoppableRelay(relay) && <button disabled={busy} onClick={() => void cancel(relay.id)}>Stop relay</button>}');
+  expect(panel).toContain('{recoverableRelay(relay) && <button disabled={busy || resumeBlocked} onClick={() => void resume(relay)}>Resume relay</button>}');
 });
 
 test("ChatGPT toolbar can assign the current conversation directly to either relay participant", () => {
