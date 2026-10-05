@@ -55,7 +55,7 @@ function existingRuntimeMatchesPackage(destination, sourceManifestBytes, identit
   }
 }
 
-function ensurePackagedRuntime({ app, coreHome, resourcesPath, trustedManifestHash }) {
+function ensurePackagedRuntime({ app, coreHome, resourcesPath, trustedManifestHash, verifyInstalled = false }) {
   if (!app.isPackaged) return null;
   const identity = {
     version: app.getVersion(),
@@ -80,7 +80,9 @@ function ensurePackagedRuntime({ app, coreHome, resourcesPath, trustedManifestHa
   // Ordinary launches use the already-installed version after a cheap manifest/required-file check.
   // Full recursive hashing is reserved for install/repair/update, keeping Electron's main thread responsive.
   if (fs.existsSync(destination) && existingRuntimeMatchesPackage(destination, sourceManifestBytes, identity)) {
-    return destination;
+    if (!verifyInstalled) return destination;
+    try { return validateRuntimeBundle(destination, expectedIdentity); }
+    catch {}
   }
 
   validateRuntimeBundle(source, identity);
