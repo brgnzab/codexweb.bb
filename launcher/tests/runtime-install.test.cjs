@@ -56,6 +56,24 @@ test("packaged runtime is installed once into a durable versioned directory", ()
   }
 });
 
+test("ordinary packaged restart skips recursive runtime hashing when installed manifest still matches", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-runtime-fast-restart-"));
+  const resourcesPath = runtimeFixture(root);
+  const coreHome = path.join(root, "core-home");
+  const app = { isPackaged: true, getVersion: () => "0.2.0" };
+  try {
+    const installed = ensurePackagedRuntime({ app, coreHome, resourcesPath });
+    const sourceFile = path.join(resourcesPath, "runtime", "app", "cli.js");
+    fs.writeFileSync(sourceFile, "tampered after install");
+    // The trusted manifest did not change, so an ordinary restart should use the already-installed
+    // runtime without rereading/hashing every packaged runtime file.
+    assert.equal(ensurePackagedRuntime({ app, coreHome, resourcesPath }), installed);
+    assert.equal(fs.readFileSync(path.join(installed, "app", "cli.js"), "utf8"), "cli");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("packaged runtime installation rejects a platform or version mismatch", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-runtime-mismatch-"));
   const resourcesPath = runtimeFixture(root, "0.1.0");

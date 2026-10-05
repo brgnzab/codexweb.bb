@@ -20,7 +20,7 @@ function validateRuntimeBundle(runtimeRoot, { version, platform, arch, bundleId,
     );
   }
   const paths = runtimeBundlePaths(runtimeRoot, platform);
-  for (const required of [paths.executable, paths.entrypoint, path.join(runtimeRoot, "app", "browser-helper.cjs")]) {
+  for (const required of requiredRuntimeFiles(runtimeRoot, platform)) {
     if (!fs.existsSync(required) || !fs.statSync(required).isFile()) {
       throw new Error(`Runtime bundle file is missing: ${required}`);
     }
@@ -29,6 +29,30 @@ function validateRuntimeBundle(runtimeRoot, { version, platform, arch, bundleId,
     throw new Error(`Bundled Bun runtime is not executable: ${paths.executable}`);
   }
   return paths.runtimeRoot;
+}
+
+function requiredRuntimeFiles(runtimeRoot, platform) {
+  const paths = runtimeBundlePaths(runtimeRoot, platform);
+  return [paths.executable, paths.entrypoint, path.join(runtimeRoot, "app", "browser-helper.cjs")];
+}
+
+function existingRuntimeMatchesPackage(destination, sourceManifestBytes, identity) {
+  try {
+    const installedManifestPath = path.join(destination, "manifest.json");
+    if (!fs.existsSync(installedManifestPath)) return false;
+    const installedManifestBytes = fs.readFileSync(installedManifestPath);
+    if (!installedManifestBytes.equals(sourceManifestBytes)) return false;
+    const manifest = JSON.parse(installedManifestBytes.toString("utf8"));
+    if (manifest.schemaVersion !== 2
+      || manifest.appVersion !== identity.version
+      || manifest.platform !== identity.platform
+      || manifest.arch !== identity.arch
+      || !/^[a-f0-9]{64}$/.test(manifest.bundleId)) return false;
+    return requiredRuntimeFiles(destination, identity.platform)
+      .every(file => fs.existsSync(file) && fs.statSync(file).isFile());
+  } catch {
+    return false;
+  }
 }
 
 function ensurePackagedRuntime({ app, coreHome, resourcesPath, trustedManifestHash }) {
@@ -41,22 +65,25 @@ function ensurePackagedRuntime({ app, coreHome, resourcesPath, trustedManifestHa
     manifestHash: trustedManifestHash || require("./runtime-trust.json").manifestHash,
   };
   const source = path.join(resourcesPath, "runtime");
-  validateRuntimeBundle(source, identity);
-  const sourceManifest = JSON.parse(fs.readFileSync(path.join(source, "manifest.json"), "utf8"));
+  const sourceManifestPath = path.join(source, "manifest.json");
+  const sourceManifestBytes = fs.readFileSync(sourceManifestPath);
+  const { sha256 } = require("./runtime-integrity.cjs");
+  if (sha256(sourceManifestBytes) !== identity.manifestHash) throw new Error("Runtime manifest integrity mismatch");
+  const sourceManifest = JSON.parse(sourceManifestBytes.toString("utf8"));
   const expectedIdentity = { ...identity, bundleId: sourceManifest.bundleId };
   const versionsRoot = path.join(coreHome, "versions");
   const destination = path.join(
     versionsRoot,
     `${identity.version}-${identity.platform}-${identity.arch}`,
   );
-  if (fs.existsSync(destination)) {
-    try {
-      return validateRuntimeBundle(destination, expectedIdentity);
-    } catch {
-      // A terminated installer or external cleanup can leave a version directory present but
-      // incomplete. Rebuild the launcher-owned bundle transactionally from the signed package.
-    }
+
+  // Ordinary launches use the already-installed version after a cheap manifest/required-file check.
+  // Full recursive hashing is reserved for install/repair/update, keeping Electron's main thread responsive.
+  if (fs.existsSync(destination) && existingRuntimeMatchesPackage(destination, sourceManifestBytes, identity)) {
+    return destination;
   }
+
+  validateRuntimeBundle(source, identity);
 
   ensurePrivateDirectory(versionsRoot, { recursive: true });
   const temporary = `${destination}.tmp-${process.pid}-${Date.now()}`;
