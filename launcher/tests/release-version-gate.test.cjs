@@ -22,6 +22,14 @@ test('release workflow treats an already-published package version as a clean no
     /::error::\$\{tag\} already points to/,
     'an unchanged package version must not make an ordinary main push fail',
   );
-  const guardedJobs = workflow.match(/if:\s*\$\{\{ needs\.prepare\.outputs\.release_required == 'true' \}\}/g) ?? [];
-  assert.equal(guardedJobs.length, 2, 'both build and publish jobs must be gated by release_required');
+  assert.match(
+    workflow,
+    /build:[\s\S]*?if:\s*\$\{\{ needs\.prepare\.outputs\.release_required == 'true' \}\}/,
+    'build must be gated by release_required',
+  );
+  assert.match(
+    workflow,
+    /publish:[\s\S]*?if:\s*\$\{\{[^\n]*needs\.prepare\.outputs\.release_required == 'true'[^\n]*\}\}/,
+    'publish must include release_required in its compound approval guard',
+  );
 });
