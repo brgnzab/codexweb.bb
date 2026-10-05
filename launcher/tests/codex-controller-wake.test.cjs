@@ -53,20 +53,28 @@ test("wake prompt scopes the controller to only the launcher runtime", () => {
   const coreHome = path.resolve("D:/CWC/isolated-candidate-runtime");
   const prompt = buildWakePrompt(coreHome);
   assert.equal(prompt, `CODEX_CHATGPT_WEB_HOME=${coreHome}. ${WAKE_PROMPT}`);
-  assert.match(prompt, /never replay submitted\/uncertain/);
+  assert.match(prompt, /current CWC bridge assignment/);
+  assert.match(prompt, /ignore all previous project\/controller instructions/);
+  assert.match(prompt, /Stay silent on success/);
+  assert.match(prompt, /concrete courier failure/);
 });
 
-test("concurrent reconnect requests share one Codex queue operation", async () => {
+test("prewarm caches executable discovery and concurrent reconnects share one queue operation", async () => {
   const calls = [];
+  let resolves = 0;
   const child = fakeChild();
   const wake = new CodexControllerWake({
     coreHome: path.resolve("D:/CWC/runtime"),
-    resolveExecutable: () => "codex.exe",
+    resolveExecutable: async () => { resolves++; return "codex.exe"; },
     spawnImpl: (executable, args, options) => { calls.push({ executable, args, options }); return child; },
   });
+  await wake.prewarm();
+  await wake.prewarm();
+  assert.equal(resolves, 1);
   const threadId = "10000000-0000-0000-0000-000000000001";
   const first = wake.activate(threadId);
   const second = wake.activate(threadId);
+  await Promise.resolve();
   assert.equal(calls.length, 1);
   child.emit("exit", 0, null);
   assert.deepEqual(await first, { requested: true, threadId });
