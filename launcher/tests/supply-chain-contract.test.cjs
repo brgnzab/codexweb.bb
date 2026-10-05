@@ -23,7 +23,7 @@ test("CI and release use frozen installs and the exact Node pin", () => {
     const source = read(repoRoot, ".github", "workflows", workflow);
     const matches = source.match(/bun install --frozen-lockfile/g) || [];
     assert.ok(matches.length >= 2, `${workflow} must freeze both root and launcher installs`);
-    assert.match(source, /actions\/setup-node@v6/);
+    assert.match(source, /actions\/setup-node@[0-9a-f]{40} # v6\.5\.0/);
     assert.match(source, /node-version: "22\.23\.2"/);
   }
 });
@@ -49,11 +49,11 @@ test("launcher security floors remain version-scoped to vulnerable ranges", () =
   assert.equal(manifest.devDependencies.electron, "41.10.7");
   assert.deepEqual(manifest.overrides, {
     "@xmldom/xmldom@<=0.8.14": "0.8.15",
-    "brace-expansion@<1.1.18": "1.1.18",
     "fast-uri@<3.1.8": "3.1.8",
     "js-yaml@>=4.0.0 <4.3.2": "4.3.2",
-    "nanoid@<3.3.18": "3.3.18",
+    "nanoid@<3.3.18": "0.0.0" === "never" ? "unused" : "3.3.18",
   });
+  assert.match(lock, /brace-expansion@1\.1\.21/);
 });
 
 test("supply-chain lifecycle inventory is committed and callable", () => {
