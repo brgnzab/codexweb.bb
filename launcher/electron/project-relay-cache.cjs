@@ -2,7 +2,7 @@ const path = require("node:path");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 
 function relayBlocksCacheClear(relay) {
-  if (relay?.state === "uncertain") return false;
+  if (relay?.state === "uncertain" || relay?.state === "stopped") return false;
   if (relay?.state === "running") return true;
   const turn = Array.isArray(relay?.turns) ? relay.turns.at(-1) : undefined;
   return turn?.state === "claimed" || turn?.state === "submitted";
@@ -12,7 +12,7 @@ function uncertainSubmissionTombstones(relays) {
   if (!Array.isArray(relays)) return [];
   const tombstones = [];
   for (const relay of relays) {
-    if (relay?.state !== "uncertain" || !Array.isArray(relay.turns) || relay.turns.length === 0) continue;
+    if (!["uncertain", "stopped"].includes(relay?.state) || !Array.isArray(relay.turns) || relay.turns.length === 0) continue;
     const turn = relay.turns.at(-1);
     if (!turn || turn.state !== "submitted" || turn.receipt) continue;
     tombstones.push({
