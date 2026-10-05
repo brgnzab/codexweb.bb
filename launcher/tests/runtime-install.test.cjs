@@ -74,6 +74,28 @@ test("ordinary packaged restart skips recursive runtime hashing when installed m
   }
 });
 
+test("off-main verification repairs installed content corruption that cheap restart checks cannot detect", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-runtime-verified-repair-"));
+  const resourcesPath = runtimeFixture(root);
+  const coreHome = path.join(root, "core-home");
+  const app = { isPackaged: true, getVersion: () => "0.2.0" };
+  try {
+    const installed = ensurePackagedRuntime({ app, coreHome, resourcesPath });
+    const entrypoint = path.join(installed, "app", "cli.js");
+    fs.writeFileSync(entrypoint, "corrupt but still present");
+
+    // Cheap ordinary lookup sees the same manifest and required file names.
+    assert.equal(ensurePackagedRuntime({ app, coreHome, resourcesPath }), installed);
+    assert.equal(fs.readFileSync(entrypoint, "utf8"), "corrupt but still present");
+
+    // Startup prewarm requests the full verification path and repairs transactionally.
+    assert.equal(ensurePackagedRuntime({ app, coreHome, resourcesPath, verifyInstalled: true }), installed);
+    assert.equal(fs.readFileSync(entrypoint, "utf8"), "cli");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("packaged runtime installation rejects a platform or version mismatch", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-runtime-mismatch-"));
   const resourcesPath = runtimeFixture(root, "0.1.0");
