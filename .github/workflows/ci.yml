@@ -36,6 +36,11 @@ jobs:
         if: github.ref == 'refs/heads/cwc-personal'
         shell: pwsh
         run: |
+          $qaTemp = Join-Path $env:USERPROFILE "cwc-source-qa-temp"
+          Remove-Item -LiteralPath $qaTemp -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $qaTemp -Force | Out-Null
+          $env:TEMP = $qaTemp
+          $env:TMP = $qaTemp
           bun test tests/project-relay.test.ts
           bun test tests/project-relay-owner-control.test.ts
           bun test tests/project-relay-ui-contract.test.ts
@@ -43,6 +48,7 @@ jobs:
           bun run typecheck
           bun run launcher:typecheck
           bun run launcher:build
+          node --test launcher/tests/startup-prewarm.test.cjs launcher/tests/project-relay-cache.test.cjs launcher/tests/codex-controller-wake.test.cjs launcher/tests/fresh-state.test.cjs launcher/tests/runtime-install.test.cjs
           bun run launcher:test
       - run: bun run app:package
         if: github.ref == 'refs/heads/main'
