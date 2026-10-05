@@ -15,20 +15,6 @@ function validateTarget(job, raw) {
   if (snapshot.thread.id !== job.target.conversation || !allowedKinds.includes(snapshot.thread.kind)) throw new Error("Desktop read does not match the owner-bound chat and kind");
   return snapshot;
 }
-function decodeEnvelopeText(value) {
-  return value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, entity => {
-    const token = entity.slice(1, -1).toLowerCase();
-    if (token === "amp") return "&";
-    if (token === "lt") return "<";
-    if (token === "gt") return ">";
-    if (token === "quot") return '"';
-    if (token === "apos") return "'";
-    const numeric = token.startsWith("#x")
-      ? Number.parseInt(token.slice(2), 16)
-      : Number.parseInt(token.slice(1), 10);
-    return Number.isInteger(numeric) ? String.fromCodePoint(numeric) : entity;
-  });
-}
 function submittedInput(item) {
   if (item.type === "userMessage") {
     if (item.truncated || item.content?.some(part => part.truncated)) throw new Error("Desktop input is truncated; read the full delivery before proceeding");
@@ -40,7 +26,7 @@ function submittedInput(item) {
   // Match the entire wrapper; keep the input byte-for-byte, including embedded tags.
   const match = /^<codex_delegation>\n  <source_thread_id>([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})<\/source_thread_id>\n  <input>([\s\S]*)<\/input>\n<\/codex_delegation>$/.exec(item.output.text);
   if (!match) throw new Error("Unsupported native delivery envelope; do not send or replay");
-  return { source: match[1], prompt: decodeEnvelopeText(match[2]) };
+  return { source: match[1], prompt: match[2] };
 }
 function deliveries(snapshot) {
   if (snapshot.truncated || snapshot.turns.some(turn => turn.truncated || !Array.isArray(turn.items))) throw new Error("Desktop read is incomplete; read the full delivery before proceeding");
