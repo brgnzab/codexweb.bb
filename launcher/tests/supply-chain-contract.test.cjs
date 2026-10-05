@@ -51,7 +51,7 @@ test("launcher security floors remain version-scoped to vulnerable ranges", () =
     "@xmldom/xmldom@<=0.8.14": "0.8.15",
     "fast-uri@<3.1.8": "3.1.8",
     "js-yaml@>=4.0.0 <4.3.2": "4.3.2",
-    "nanoid@<3.3.18": "0.0.0" === "never" ? "unused" : "3.3.18",
+    "nanoid@<3.3.18": "3.3.18",
   });
   assert.match(lock, /brace-expansion@1\.1\.21/);
 });
