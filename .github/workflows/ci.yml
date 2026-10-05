@@ -72,13 +72,13 @@ jobs:
           & $Node launcher/scripts/test-active.cjs
           exit $LASTEXITCODE
           '@ | Set-Content -LiteralPath $qaScript -Encoding UTF8
-          & icacls.exe $env:GITHUB_WORKSPACE /grant:r "$qaIdentity:(OI)(CI)(RX)" /T /C /Q | Out-Null
-          & icacls.exe $qaScript /grant:r "$qaIdentity:(R)" /Q | Out-Null
+          & icacls.exe $env:GITHUB_WORKSPACE /grant:r "${qaIdentity}:(OI)(CI)(RX)" /T /C /Q | Out-Null
+          & icacls.exe $qaScript /grant:r "${qaIdentity}:(R)" /Q | Out-Null
           $embeddedBun = $env:CODEX_CHATGPT_WEB_EMBEDDED_BUN
           try {
             $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $qaCredential -WorkingDirectory "C:\Users\Public" -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $qaScript, "-Workspace", $env:GITHUB_WORKSPACE, "-Node", $node, "-EmbeddedBun", $embeddedBun) -RedirectStandardOutput $qaStdout -RedirectStandardError $qaStderr -Wait -PassThru
             if (Test-Path $qaStdout) { Get-Content $qaStdout }
-            if (Test-Path $qaStderr) { Get-Content $qaStderr | Write-Error }
+            if (Test-Path $qaStderr) { Get-Content $qaStderr | ForEach-Object { Write-Host $_ } }
             if ($process.ExitCode -ne 0) { exit $process.ExitCode }
           } finally {
             Remove-LocalUser -Name $qaUser -ErrorAction SilentlyContinue
