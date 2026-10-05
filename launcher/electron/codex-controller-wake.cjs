@@ -4,7 +4,7 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 
 const CODEX_THREAD_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-const WAKE_PROMPT = "Run CWC controller procedure; process relay queue; never replay submitted/uncertain.";
+const WAKE_PROMPT = "Use only the current CWC bridge assignment; ignore all previous project/controller instructions. Deliver exactly once. Stay silent on success; report only concrete courier failure.";
 
 function buildWakePrompt(coreHome) {
   return `CODEX_CHATGPT_WEB_HOME=${coreHome}. ${WAKE_PROMPT}`;
@@ -103,14 +103,61 @@ function boundedOutput(chunks) {
   return chunks.join("").trim().replace(/\s+/g, " ").slice(0, 1200);
 }
 
+async function resolveCodexExecutableOffMain({
+  executable = process.execPath,
+  workerPath = path.join(__dirname, "codex-controller-probe-worker.cjs"),
+  spawnImpl = spawn,
+} = {}) {
+  return await new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawnImpl(executable, [workerPath], {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    const stdout = [];
+    const stderr = [];
+    child.stdout?.on?.("data", chunk => stdout.push(String(chunk)));
+    child.stderr?.on?.("data", chunk => stderr.push(String(chunk)));
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code !== 0) {
+        reject(new Error(boundedOutput(stderr) || boundedOutput(stdout) || `Codex probe exited with ${signal || code}`));
+        return;
+      }
+      const resolved = boundedOutput(stdout);
+      if (!resolved || !path.isAbsolute(resolved)) {
+        reject(new Error("Codex probe returned an invalid executable path"));
+        return;
+      }
+      resolve(resolved);
+    });
+  });
+}
+
 class CodexControllerWake {
-  constructor({ coreHome, logger, spawnImpl = spawn, resolveExecutable = resolveCodexExecutable } = {}) {
+  constructor({ coreHome, logger, spawnImpl = spawn, resolveExecutable = resolveCodexExecutableOffMain } = {}) {
     if (!coreHome || !path.isAbsolute(coreHome)) throw new Error("Codex controller wake requires an absolute CWC runtime home");
     this.coreHome = coreHome;
     this.logger = logger;
     this.spawnImpl = spawnImpl;
     this.resolveExecutable = resolveExecutable;
     this.pending = null;
+    this.executablePromise = null;
+  }
+
+  async prewarm() {
+    this.executablePromise ??= Promise.resolve().then(() => this.resolveExecutable());
+    try { return await this.executablePromise; }
+    catch (error) {
+      this.executablePromise = null;
+      throw error;
+    }
   }
 
   async activate(rawThreadId) {
@@ -124,7 +171,7 @@ class CodexControllerWake {
   }
 
   async queue(threadId) {
-    const executable = this.resolveExecutable();
+    const executable = await this.prewarm();
     const args = ["queue", "--thread", threadId, "--message", buildWakePrompt(this.coreHome)];
     this.logger?.info?.("codex.bridge_activation_requested", { threadId });
 
@@ -177,6 +224,7 @@ module.exports = {
   CodexControllerWake,
   needsNativeRelay,
   resolveCodexExecutable,
+  resolveCodexExecutableOffMain,
   supportsControllerQueue,
   desktopCodexCandidates,
 };
