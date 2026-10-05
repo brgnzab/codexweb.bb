@@ -59,6 +59,10 @@
       {
         "from": "build/runtime",
         "to": "runtime"
+      },
+      {
+        "from": "build/build-id.json",
+        "to": "build-id.json"
       }
     ],
     "win": {
