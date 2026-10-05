@@ -46,6 +46,7 @@ test("recorded Windows build toolchain matches committed launcher lock", () => {
 
 test("launcher security floors remain version-scoped to vulnerable ranges", () => {
   const manifest = JSON.parse(read(launcherRoot, "package.json"));
+  const lock = read(launcherRoot, "bun.lock");
   assert.equal(manifest.devDependencies.electron, "41.10.7");
   assert.deepEqual(manifest.overrides, {
     "@xmldom/xmldom@<=0.8.14": "0.8.15",
