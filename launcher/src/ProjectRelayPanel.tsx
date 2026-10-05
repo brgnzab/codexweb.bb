@@ -56,7 +56,7 @@ export function RelayAssignmentControls({ conversation, busy }: { conversation?:
 
 const participantLabel = (peer: number) => peer === 0 ? "First" : "Second";
 const recoverableRelay = (relay: ProjectRelayView) => relay.state !== "running" && relay.state !== "uat-ready";
-const stoppableRelay = (relay: ProjectRelayView) => relay.state === "running" || relay.state === "blocked";
+const stoppableRelay = (relay: ProjectRelayView) => !["uat-ready", "stopped", "cancelled"].includes(relay.state);
 const eventLabel = (relay: ProjectRelayView): string => {
   if (relay.event) return relay.event;
   if (/composer did not preserve the complete prompt|prompt integrity/i.test(relay.result ?? "")) return "Composer integrity failure";

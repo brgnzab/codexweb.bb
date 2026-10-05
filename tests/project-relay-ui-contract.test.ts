@@ -5,8 +5,8 @@ import { join } from "node:path";
 const panel = readFileSync(join(import.meta.dir, "..", "launcher", "src", "ProjectRelayPanel.tsx"), "utf8");
 const app = readFileSync(join(import.meta.dir, "..", "launcher", "src", "CouncilApp.tsx"), "utf8");
 
-test("blocked relays expose Stop relay owner control", () => {
-  expect(panel).toContain('const stoppableRelay = (relay: ProjectRelayView) => relay.state === "running" || relay.state === "blocked";');
+test("active and unresolved relays expose Stop relay owner control", () => {
+  expect(panel).toContain('const stoppableRelay = (relay: ProjectRelayView) => !["uat-ready", "stopped", "cancelled"].includes(relay.state);');
   expect(panel).toContain('{stoppableRelay(relay) && <button disabled={busy} onClick={() => void cancel(relay.id)}>Stop relay</button>}');
 });
 

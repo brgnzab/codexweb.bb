@@ -241,6 +241,20 @@ describe("Native desktop adapter", () => {
     expect(assertReady({ ...job, worker: "other" }, snapshot)).toEqual({ baselineTurnId: "turn-1" });
   });
 
+  test("native reconciliation decodes transport HTML entities without changing the relay prompt", () => {
+    const job = { target: peer("codex", 0), worker: controllerId, prompt: "Review Q&A exactly & preserve <tags> and \"quotes\"." };
+    const snapshot = delegated(job, "Reconciled answer");
+    snapshot.turns[0].items[0].output.text = snapshot.turns[0].items[0].output.text
+      .replace("Q&A", "Q&amp;A")
+      .replace("exactly & preserve", "exactly &amp; preserve")
+      .replace("<tags>", "&lt;tags&gt;")
+      .replace('"quotes"', "&quot;quotes&quot;");
+    expect(completedAnswer(job, snapshot)).toEqual({
+      answer: "Reconciled answer",
+      receipt: "turn-1:answer-1",
+    });
+  });
+
   test("identical text can be a later handoff while reconciliation requires a new native turn", () => {
     const job = { target: peer("codex", 0), worker: controllerId, prompt: "Chicken breast." };
     const prior = delegated(job, "Earlier answer");
