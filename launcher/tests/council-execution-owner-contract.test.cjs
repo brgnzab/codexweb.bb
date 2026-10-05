@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { writePrivateFileAtomic } = require("../electron/atomic-file.cjs");
 const ownerClient = require("../electron/council-owner-client.cjs");
 
 function withOwnerDescriptor(prefix, token = "d".repeat(64)) {
@@ -10,8 +11,7 @@ function withOwnerDescriptor(prefix, token = "d".repeat(64)) {
   const previous = process.env.CODEX_CHATGPT_WEB_HOME;
   process.env.CODEX_CHATGPT_WEB_HOME = root;
   const dir = path.join(root, "council");
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "owner-control.json"), JSON.stringify({
+  writePrivateFileAtomic(path.join(dir, "owner-control.json"), JSON.stringify({
     version: 1,
     endpoint: "http://127.0.0.1:17842/api/owner",
     token,
