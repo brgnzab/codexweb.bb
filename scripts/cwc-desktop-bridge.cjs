@@ -56,20 +56,22 @@ function visibleAssignment(candidate) {
   return { threadId: candidate.peer.conversation, prompt: candidate.turn.prompt };
 }
 
-async function exactSubmittedAssignment(send, worker, nativeSnapshot) {
+async function exactCompletionAssignment(send, worker, nativeSnapshot) {
   const snapshot = await send("project-relay/list");
   const matches = [];
   for (const session of snapshot?.relays || []) {
-    const turn = session.turns?.at?.(-1);
-    const candidate = nativeTurn(session, turn);
-    if (!candidate || turn.worker !== worker || turn.state !== "submitted") continue;
-    const job = jobFor(session, turn);
-    try {
-      const result = completedAnswer(job, nativeSnapshot);
-      matches.push({ ...candidate, result });
-    } catch {}
+    for (const turn of session.turns || []) {
+      const candidate = nativeTurn(session, turn);
+      if (!candidate || turn.worker !== worker || !["submitted", "completed"].includes(turn.state)) continue;
+      const job = jobFor(session, turn);
+      try {
+        const result = completedAnswer(job, nativeSnapshot);
+        if (turn.state === "completed" && turn.receipt !== result.receipt) continue;
+        matches.push({ ...candidate, result, alreadyCompleted: turn.state === "completed" });
+      } catch {}
+    }
   }
-  return exactlyOne(matches, "Native snapshot does not exactly match one submitted CWC delivery");
+  return exactlyOne(matches, "Native snapshot does not exactly match one CWC submitted delivery");
 }
 
 async function run(request, send = ownerRequest, rawControllerId = process.env.CODEX_THREAD_ID) {
@@ -106,11 +108,13 @@ async function run(request, send = ownerRequest, rawControllerId = process.env.C
   }
 
   if (request.operation === "complete") {
-    const candidate = await exactSubmittedAssignment(send, worker, request.snapshot);
-    await send("project-relay/complete", {
-      ...internalIds(candidate.session, candidate.turn),
-      ...candidate.result,
-    });
+    const candidate = await exactCompletionAssignment(send, worker, request.snapshot);
+    if (!candidate.alreadyCompleted) {
+      await send("project-relay/complete", {
+        ...internalIds(candidate.session, candidate.turn),
+        ...candidate.result,
+      });
+    }
     return undefined;
   }
 
