@@ -41,6 +41,8 @@ function relay(state, turnState = "completed") {
 test("clear-cache gate treats terminal uncertain submitted evidence as a tombstone, not active work", () => {
   assert.equal(relayBlocksCacheClear(relay("running", "submitted")), true);
   assert.equal(relayBlocksCacheClear(relay("uncertain", "submitted")), false);
+  assert.equal(relayBlocksCacheClear(relay("terminated", "submitted")), true);
+  assert.equal(relayBlocksCacheClear(relay("stopped", "submitted")), true);
   assert.equal(relayBlocksCacheClear(relay("completed", "completed")), false);
 });
 
