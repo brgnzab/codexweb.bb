@@ -21,18 +21,19 @@ test("the public launcher command uses the hardened Electron Council bootstrap",
   assert.equal(fs.existsSync(path.join(launcherRoot, "electron", "smoke-main.cjs")), true);
 });
 
-test("launcher packages Windows x64 only with constrained NSIS settings", () => {
+test("launcher packages a Windows x64 portable directory without installer targets", () => {
   assert.equal(manifest.build.appId, "dev.codexwebgpt.launcher");
   assert.equal(manifest.build.artifactName, "codex-web-gpt-${version}-${os}-${arch}.${ext}");
   assert.equal(manifest.build.mac, undefined);
   assert.equal(manifest.build.linux, undefined);
-  assert.deepEqual(manifest.build.win.target, ["nsis"]);
+  assert.equal(manifest.build.win.target, undefined);
+  assert.equal(manifest.build.nsis, undefined);
   assert.equal(manifest.build.win.icon, "assets/icon.ico");
   assert.ok(fs.existsSync(path.join(launcherRoot, "assets", "icon.ico")));
-  assert.equal(manifest.build.nsis.perMachine, false);
-  assert.equal(manifest.build.nsis.allowElevation, false);
-  assert.equal(manifest.build.nsis.runAfterFinish, false);
   assert.ok(manifest.build.files.includes("electron/**"), "hardened Electron entrypoint must be packaged");
+  const packager = read(launcherRoot, "scripts", "package.cjs");
+  assert.match(packager, /"--dir"/);
+  assert.match(packager, /-portable\\.zip/);
 });
 
 test("packager accepts only Windows x64 and never publishes automatically", () => {
@@ -52,7 +53,7 @@ test("packaged smoke gives the cold runtime copy its own bounded timeout", () =>
   assert.match(smoke, /timeout: options\.timeout \?\? DEFAULT_COMMAND_TIMEOUT_MS/);
   assert.match(
     smoke,
-    /run\(executable, \["--launcher-smoke-test"\], \{ env, timeout: COLD_RUNTIME_SMOKE_TIMEOUT_MS \}\);/,
+    /run\(appExe, \["--launcher-smoke-test"\], \{ cwd: portableRoot, env, timeout: COLD_RUNTIME_SMOKE_TIMEOUT_MS \}\);/,
   );
 });
 
@@ -78,7 +79,8 @@ test("CI and release build the Windows product only", () => {
   assert.match(ci, /bun run app:smoke/);
   assert.doesNotMatch(ci, /macos-15|AppImage|\.dmg/);
   assert.match(release, /build:\s*[\s\S]*?runs-on: windows-latest/);
-  assert.match(release, /codex-chatgpt-web-windows-amd64\.zip/);
+  assert.match(release, /name: release-windows-x64/);
+  assert.match(release, /launcher\/artifacts\/\*-portable\.zip/);
   assert.match(release, /bun run app:smoke/);
   assert.doesNotMatch(release, /macos-15|darwin-arm64|darwin-amd64|linux-amd64|AppImage|\.dmg/);
 });
