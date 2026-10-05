@@ -82,7 +82,7 @@ jobs:
           Set-Location $Workspace
           & $Node --test launcher/tests/startup-prewarm.test.cjs launcher/tests/project-relay-cache.test.cjs launcher/tests/codex-controller-wake.test.cjs launcher/tests/fresh-state.test.cjs launcher/tests/runtime-install.test.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $Bun run launcher:test
+          & $Bun run --cwd (Join-Path $Workspace "launcher") test
           exit $LASTEXITCODE
           '@ | Set-Content -LiteralPath $qaScript -Encoding UTF8
           & icacls.exe $env:GITHUB_WORKSPACE /grant:r "${qaIdentity}:(OI)(CI)(RX)" /T /C /Q | Out-Null
