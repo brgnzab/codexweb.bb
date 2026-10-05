@@ -56,13 +56,14 @@ export function RelayAssignmentControls({ conversation, busy }: { conversation?:
 
 const participantLabel = (peer: number) => peer === 0 ? "First" : "Second";
 const recoverableRelay = (relay: ProjectRelayView) => relay.state !== "running" && relay.state !== "uat-ready";
-const stoppableRelay = (relay: ProjectRelayView) => !["uat-ready", "stopped", "cancelled"].includes(relay.state);
+const stoppableRelay = (relay: ProjectRelayView) => !["completed", "uat-ready", "stopped", "cancelled"].includes(relay.state);
 const eventLabel = (relay: ProjectRelayView): string => {
   if (relay.event) return relay.event;
   if (/composer did not preserve the complete prompt|prompt integrity/i.test(relay.result ?? "")) return "Composer integrity failure";
   if (relay.state === "terminated") return "Relay terminated unexpectedly";
   if (relay.state === "failed") return "Delivery failed";
   if (relay.state === "uncertain") return "Submission outcome uncertain";
+  if (relay.state === "completed") return "Handoff segment completed";
   if (relay.state === "stopped" || relay.state === "cancelled") return "Relay stopped";
   if (relay.state === "uat-ready") return "UAT ready";
   return "Relay active";
@@ -138,7 +139,7 @@ export function ProjectRelayPanel() {
     finally { setBusy(false); }
   };
   return <section className="project-relay">
-    <header><h2>Work between your existing chats</h2><p>Choose two participants, give them the task, and let CWC carry their answers back and forth until a blocker or UAT-ready result.</p></header>
+    <header><h2>Work between your existing chats</h2><p>Choose two participants, give them the task, and let CWC carry their answers back and forth until the handoff segment completes, a blocker appears, or review reaches UAT-ready.</p></header>
     <p role="status">Desktop bridge: <strong>{snapshot.bridge.connected ? "Connected" : "Not connected"}</strong>{!snapshot.bridge.connected && " — CWC will wake the configured controller automatically when this relay needs Codex/Work."}</p>
     {(error || loadError || snapshot.bridge.error) && <p role="alert" className="relay-error">{error || loadError || snapshot.bridge.error}</p>}
     <form onSubmit={event => { event.preventDefault(); void start(); }}>
