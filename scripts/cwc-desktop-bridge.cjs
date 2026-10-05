@@ -1,40 +1,125 @@
-// Called by an owner-authorized controller inside Codex. Credentials never leave this process.
+// Called by an owner-authorized controller inside Codex. Credentials and relay identifiers never leave this helper.
 const fs = require("node:fs");
 const path = require("node:path");
 const { ownerRequest } = require("../launcher/electron/council-owner-client.cjs");
 const { assertReady, completedAnswer } = require("../launcher/electron/project-relay-desktop.cjs");
 
-async function run(request, send = ownerRequest, controllerId = process.env.CODEX_THREAD_ID) {
-  const fields = {
-    list: ["operation"],
-    claim: ["operation", "worker"],
-    prepare: ["operation", "relay_id", "delivery_id", "lease", "snapshot"],
-    complete: ["operation", "relay_id", "delivery_id", "lease", "snapshot"],
-    fail: ["operation", "relay_id", "delivery_id", "lease", "reason"],
+const CODEX_THREAD_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+function controllerId(value) {
+  const id = String(value || "").trim().toLowerCase();
+  if (!CODEX_THREAD_ID.test(id)) throw new Error("Run the desktop bridge inside the owner-authorized Codex controller chat; CODEX_THREAD_ID is missing");
+  return id;
+}
+
+function jobFor(session, turn) {
+  return {
+    target: session.peers[turn.peer],
+    prompt: turn.prompt,
+    worker: turn.worker,
+    baselineTurnId: turn.nativeBaselineTurnId,
   };
-  if (!request || typeof request !== "object" || Array.isArray(request) || !fields[request.operation] || Object.keys(request).some(key => !fields[request.operation].includes(key))) throw new Error("Invalid desktop bridge request");
-  if (request.operation === "list") return send("project-relay/list");
-  if (request.operation === "claim") {
-    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(controllerId ?? "")) throw new Error("Run the desktop bridge inside the owner-authorized Codex controller chat; CODEX_THREAD_ID is missing");
-    if (request.worker !== undefined && request.worker !== controllerId) throw new Error("Claim worker must match this Codex chat; omit worker to use CODEX_THREAD_ID automatically");
-    return send("project-relay/claim", { worker: controllerId });
+}
+
+function internalIds(session, turn) {
+  return { relay_id: session.id, delivery_id: turn.id, lease: turn.lease };
+}
+
+function nativeTurn(session, turn) {
+  const peer = session?.peers?.[turn?.peer];
+  return peer && peer.kind !== "gw" ? { session, turn, peer } : null;
+}
+
+function activeAssignments(snapshot, worker) {
+  const matches = [];
+  for (const session of snapshot?.relays || []) {
+    if (session.state !== "running") continue;
+    const turn = session.turns?.at?.(-1);
+    const candidate = nativeTurn(session, turn);
+    if (!candidate || turn.worker !== worker || !["claimed", "submitted"].includes(turn.state)) continue;
+    matches.push(candidate);
   }
-  const ids = { relay_id: request.relay_id, delivery_id: request.delivery_id, lease: request.lease };
-  if (request.operation === "fail") return send("project-relay/fail", { ...ids, reason: request.reason });
+  return matches;
+}
+
+function exactlyOne(values, message) {
+  if (values.length !== 1) throw new Error(values.length ? `${message}: multiple current assignments exist` : `${message}: no current assignment exists`);
+  return values[0];
+}
+
+async function currentAssignment(send, worker) {
   const snapshot = await send("project-relay/list");
-  const session = snapshot.relays.find(relay => relay.id === ids.relay_id);
-  const turn = session?.turns.find(turn => turn.id === ids.delivery_id);
-  if (!turn || turn.lease !== ids.lease) throw new Error("Desktop delivery lease does not match");
-  if (!controllerId || turn.worker !== controllerId) throw new Error("This delivery belongs to a different controller; do not send or replay");
-  const job = { target: session.peers[turn.peer], prompt: turn.prompt, worker: turn.worker, baselineTurnId: turn.nativeBaselineTurnId };
-  if (request.operation === "prepare") {
-    if (turn.state !== "claimed") throw new Error("Delivery is no longer eligible to send; reconcile only");
-    const { baselineTurnId } = assertReady(job, request.snapshot);
-    await send("project-relay/submitting", { ...ids, ...(baselineTurnId ? { baseline_turn_id: baselineTurnId } : {}) });
-    return { sendOnce: true, threadId: job.target.conversation, prompt: job.prompt };
+  return exactlyOne(activeAssignments(snapshot, worker), "CWC bridge assignment is unavailable");
+}
+
+function visibleAssignment(candidate) {
+  return { threadId: candidate.peer.conversation, prompt: candidate.turn.prompt };
+}
+
+async function exactSubmittedAssignment(send, worker, nativeSnapshot) {
+  const snapshot = await send("project-relay/list");
+  const matches = [];
+  for (const session of snapshot?.relays || []) {
+    const turn = session.turns?.at?.(-1);
+    const candidate = nativeTurn(session, turn);
+    if (!candidate || turn.worker !== worker || turn.state !== "submitted") continue;
+    const job = jobFor(session, turn);
+    try {
+      const result = completedAnswer(job, nativeSnapshot);
+      matches.push({ ...candidate, result });
+    } catch {}
   }
-  const result = completedAnswer(job, request.snapshot);
-  return send("project-relay/complete", { ...ids, ...result });
+  return exactlyOne(matches, "Native snapshot does not exactly match one submitted CWC delivery");
+}
+
+async function run(request, send = ownerRequest, rawControllerId = process.env.CODEX_THREAD_ID) {
+  const fields = {
+    claim: ["operation"],
+    prepare: ["operation", "snapshot"],
+    complete: ["operation", "snapshot"],
+    fail: ["operation", "reason"],
+  };
+  if (!request || typeof request !== "object" || Array.isArray(request) || !fields[request.operation] || Object.keys(request).some(key => !fields[request.operation].includes(key))) {
+    throw new Error("Invalid desktop bridge request");
+  }
+  const worker = controllerId(rawControllerId);
+
+  if (request.operation === "claim") {
+    const existing = activeAssignments(await send("project-relay/list"), worker);
+    if (existing.length > 1) throw new Error("CWC bridge has multiple active assignments; stop and inspect relay state");
+    if (existing.length === 1) return visibleAssignment(existing[0]);
+    const claimed = await send("project-relay/claim", { worker });
+    if (!claimed) return null;
+    return { threadId: claimed.target.conversation, prompt: claimed.prompt };
+  }
+
+  if (request.operation === "prepare") {
+    const candidate = await currentAssignment(send, worker);
+    if (candidate.turn.state !== "claimed") throw new Error("Current CWC assignment already crossed the submission boundary; never replay it");
+    const job = jobFor(candidate.session, candidate.turn);
+    const { baselineTurnId } = assertReady(job, request.snapshot);
+    await send("project-relay/submitting", {
+      ...internalIds(candidate.session, candidate.turn),
+      ...(baselineTurnId ? { baseline_turn_id: baselineTurnId } : {}),
+    });
+    return visibleAssignment(candidate);
+  }
+
+  if (request.operation === "complete") {
+    const candidate = await exactSubmittedAssignment(send, worker, request.snapshot);
+    await send("project-relay/complete", {
+      ...internalIds(candidate.session, candidate.turn),
+      ...candidate.result,
+    });
+    return undefined;
+  }
+
+  const candidate = await currentAssignment(send, worker);
+  await send("project-relay/fail", {
+    ...internalIds(candidate.session, candidate.turn),
+    reason: request.reason,
+  });
+  return undefined;
 }
 
 if (require.main === module) {
@@ -44,7 +129,7 @@ if (require.main === module) {
     Promise.resolve().then(() => {
       if (fs.statSync(filename).size > 2 * 1024 * 1024) throw new Error("Bridge request exceeds 2 MiB");
       return run(JSON.parse(fs.readFileSync(filename, "utf8")));
-    }).then(value => console.log(JSON.stringify(value))).catch(error => { console.error(error.message); process.exitCode = 1; });
+    }).then(value => { if (value !== undefined) console.log(JSON.stringify(value)); }).catch(error => { console.error(error.message); process.exitCode = 1; });
   }
 }
 module.exports = { run };
