@@ -74,7 +74,7 @@ test("prewarm caches executable discovery and concurrent reconnects share one qu
   const threadId = "10000000-0000-0000-0000-000000000001";
   const first = wake.activate(threadId);
   const second = wake.activate(threadId);
-  await Promise.resolve();
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls.length, 1);
   child.emit("exit", 0, null);
   assert.deepEqual(await first, { requested: true, threadId });
