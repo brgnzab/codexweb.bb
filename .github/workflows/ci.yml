@@ -37,51 +37,66 @@ jobs:
         shell: pwsh
         run: |
           bun test tests/project-relay.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bun test tests/project-relay-owner-control.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bun test tests/project-relay-ui-contract.test.ts
-          bun test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bun run typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bun run launcher:typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bun run launcher:build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           # GitHub's Windows runner executes elevated, which makes newly created temp paths
           # owned by the Administrators group. The launcher security contract intentionally
           # requires the current user SID, so execute launcher QA as an ordinary local user
           # instead of weakening the production ACL checks.
           $qaUser = "cwcqa"
-          $qaPasswordText = "CwcQa!" + [Guid]::NewGuid().ToString("N") + "aA1"
+          Remove-LocalUser -Name $qaUser -ErrorAction SilentlyContinue
+          $qaPasswordText = "R7!x" + [Guid]::NewGuid().ToString("N") + "#K9z"
           $qaPassword = ConvertTo-SecureString $qaPasswordText -AsPlainText -Force
           $qaCredential = [pscredential]::new("$env:COMPUTERNAME\$qaUser", $qaPassword)
           New-LocalUser -Name $qaUser -Password $qaPassword -PasswordNeverExpires | Out-Null
           $qaIdentity = "$env:COMPUTERNAME\$qaUser"
           $qaScript = Join-Path $env:RUNNER_TEMP "cwc-launcher-source-qa.ps1"
-          $qaStdout = Join-Path $env:RUNNER_TEMP "cwc-launcher-source-qa.stdout.txt"
-          $qaStderr = Join-Path $env:RUNNER_TEMP "cwc-launcher-source-qa.stderr.txt"
+          $qaStdout = "C:\Users\Public\cwc-launcher-source-qa.stdout.txt"
+          $qaStderr = "C:\Users\Public\cwc-launcher-source-qa.stderr.txt"
+          $qaBin = "C:\Users\Public\cwc-qa-bin"
+          Remove-Item -LiteralPath $qaBin -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $qaBin -Force | Out-Null
+          $bun = Join-Path $qaBin "bun.exe"
+          Copy-Item -LiteralPath (Get-Command bun).Source -Destination $bun -Force
           $node = (Get-Command node).Source
+          $embeddedBun = $env:CODEX_CHATGPT_WEB_EMBEDDED_BUN
           @'
-          param([string]$Workspace, [string]$Node, [string]$EmbeddedBun)
+          param([string]$Workspace, [string]$Node, [string]$Bun, [string]$EmbeddedBun)
           $ErrorActionPreference = "Stop"
           $qaTemp = Join-Path "C:\Users\Public" ("cwc-source-qa-" + [Guid]::NewGuid().ToString("N"))
           New-Item -ItemType Directory -Path $qaTemp -Force | Out-Null
           $env:TEMP = $qaTemp
           $env:TMP = $qaTemp
+          $env:PATH = "$(Split-Path -Parent $Bun);$(Split-Path -Parent $Node);$env:PATH"
           if ($EmbeddedBun) { $env:CODEX_CHATGPT_WEB_EMBEDDED_BUN = $EmbeddedBun }
           Set-Location $Workspace
           & $Node --test launcher/tests/startup-prewarm.test.cjs launcher/tests/project-relay-cache.test.cjs launcher/tests/codex-controller-wake.test.cjs launcher/tests/fresh-state.test.cjs launcher/tests/runtime-install.test.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $Node launcher/scripts/test-active.cjs
+          & $Bun run launcher:test
           exit $LASTEXITCODE
           '@ | Set-Content -LiteralPath $qaScript -Encoding UTF8
           & icacls.exe $env:GITHUB_WORKSPACE /grant:r "${qaIdentity}:(OI)(CI)(RX)" /T /C /Q | Out-Null
           & icacls.exe $qaScript /grant:r "${qaIdentity}:(R)" /Q | Out-Null
-          $embeddedBun = $env:CODEX_CHATGPT_WEB_EMBEDDED_BUN
+          & icacls.exe $qaBin /grant:r "${qaIdentity}:(OI)(CI)(RX)" /T /C /Q | Out-Null
           try {
-            $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $qaCredential -WorkingDirectory "C:\Users\Public" -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $qaScript, "-Workspace", $env:GITHUB_WORKSPACE, "-Node", $node, "-EmbeddedBun", $embeddedBun) -RedirectStandardOutput $qaStdout -RedirectStandardError $qaStderr -Wait -PassThru
+            $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $qaCredential -WorkingDirectory "C:\Users\Public" -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $qaScript, "-Workspace", $env:GITHUB_WORKSPACE, "-Node", $node, "-Bun", $bun, "-EmbeddedBun", $embeddedBun) -RedirectStandardOutput $qaStdout -RedirectStandardError $qaStderr -Wait -PassThru
             if (Test-Path $qaStdout) { Get-Content $qaStdout }
             if (Test-Path $qaStderr) { Get-Content $qaStderr | ForEach-Object { Write-Host $_ } }
             if ($process.ExitCode -ne 0) { exit $process.ExitCode }
           } finally {
             Remove-LocalUser -Name $qaUser -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $qaBin -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $qaStdout,$qaStderr -Force -ErrorAction SilentlyContinue
           }
       - run: bun run app:package
         if: github.ref == 'refs/heads/main'
