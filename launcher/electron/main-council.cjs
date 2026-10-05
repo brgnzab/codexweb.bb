@@ -70,15 +70,15 @@ const {
 const { getAutostart, setAutostart } = require("./autostart.cjs");
 const { createLogger, installProcessDiagnosticGuards, registerLoggedIpc, redactText } = require("./logging.cjs");
 const { RuntimeHost, COUNCIL_CONNECTOR_NAME } = require("./runtime.cjs");
-const { ensurePackagedRuntime } = require("./runtime-install.cjs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
+const { runStartupPrewarm } = require("./startup-prewarm.cjs");
 const { createStateStore, nextSessionRefreshReminderAt, validateSidebarState } = require("./state.cjs");
 const {
   clearCouncilCoreHome,
-  prepareFreshBuild,
   readBuildMarker,
   resetRuntimeFlags,
   resolveBuildId,
+  writeBuildMarker,
 } = require("./fresh-state.cjs");
 const {
   relayBlocksCacheClear,
@@ -148,6 +148,14 @@ let shutdownInProgress = false;
 let exitCommitted = false;
 let automationTransport = null;
 let codexControllerWake = null;
+let infrastructureStartPromise = null;
+let resolveInfrastructureReady;
+let rejectInfrastructureReady;
+const infrastructureReady = new Promise((resolve, reject) => {
+  resolveInfrastructureReady = resolve;
+  rejectInfrastructureReady = reject;
+});
+infrastructureReady.catch(() => {});
 
 function send(channel, value) {
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(channel, value);
@@ -344,6 +352,7 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:session-reminder-dismiss", () => { const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() }); send("launcher:state-changed", state); return state; });
   handle("launcher:browser-smoke", async () => { const result = await browserHost.smokeTest(); smokePassedThisSession = true; stateStore.update({ browserSmokePassed: true, browserSmokeVersion: app.getVersion() }); return result; });
   handle("launcher:council-runtime-start", async () => {
+    await infrastructureReady;
     const result = await bootstrapCouncilRuntime({ stateStore, logger, forceLocal: true });
     return { ok: result.runtime.status === "ready", stdout: result.stdout };
   });
@@ -388,17 +397,19 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:council-agent-focus", (_event, agentId) => focusAgentConversation(safeCouncilId(agentId, "agentId")));
   handle("launcher:council-execution-runs", () => listExecutionRuns());
-  handle("launcher:codex-bridge-status", () => codexBridgeStatus());
-  handle("launcher:codex-bridge-set", (_event, threadId) => setCodexBridgeController(threadId));
-  handle("launcher:codex-bridge-clear", () => clearCodexBridgeController());
+  handle("launcher:codex-bridge-status", async () => { await infrastructureReady; return codexBridgeStatus(); });
+  handle("launcher:codex-bridge-set", async (_event, threadId) => { await infrastructureReady; return setCodexBridgeController(threadId); });
+  handle("launcher:codex-bridge-clear", async () => { await infrastructureReady; return clearCodexBridgeController(); });
   handle("launcher:codex-bridge-reconnect", async () => {
+    await infrastructureReady;
     const status = await codexBridgeStatus();
     if (!status.configuredThread) throw new Error("Set a Codex Bridge Thread before reconnecting");
     if (!status.connected) await codexControllerWake.activate(status.configuredThread);
     return codexBridgeStatus();
   });
-  handle("launcher:project-relay-list", () => listProjectRelays());
+  handle("launcher:project-relay-list", async () => { await infrastructureReady; return listProjectRelays(); });
   handle("launcher:project-relay-start", async (_event, input) => {
+    await infrastructureReady;
     const relay = await startProjectRelay(input);
     if (needsNativeRelay(relay?.peers)) {
       const status = await codexBridgeStatus();
@@ -407,7 +418,7 @@ function registerIpc({ logger, stateStore }) {
     }
     return relay;
   });
-  handle("launcher:project-relay-cancel", (_event, id) => cancelProjectRelay(safeCouncilId(id, "relayId")));
+  handle("launcher:project-relay-cancel", async (_event, id) => { await infrastructureReady; return cancelProjectRelay(safeCouncilId(id, "relayId")); });
   handle("launcher:council-execution-read", (_event, runId) => readExecutionRun(safeCouncilId(runId, "runId")));
   handle("launcher:council-execution-events", (_event, runId) => readExecutionEvents(safeCouncilId(runId, "runId")));
   handle("launcher:council-execution-receipts", () => readExecutionReceipts());
@@ -489,12 +500,9 @@ async function start() {
   }
 
   let installedRuntimeRoot = null;
-  let runtimeRootResolved = false;
+  let runtimeRootResolved = !app.isPackaged;
   const runtimeRootProvider = () => {
-    if (app.isPackaged || !runtimeRootResolved) {
-      installedRuntimeRoot = ensurePackagedRuntime({ app, coreHome: CORE_HOME, resourcesPath: process.resourcesPath });
-      runtimeRootResolved = true;
-    }
+    if (app.isPackaged && !runtimeRootResolved) throw new Error("Packaged Council runtime prewarm is not ready");
     return installedRuntimeRoot;
   };
   const stateStore = createStateStore(path.join(app.getPath("userData"), "launcher-state.json"));
@@ -517,6 +525,34 @@ async function start() {
   if (!smoke) await loadRenderer(mainWindow);
 
   const initializeServices = async () => {
+    const buildId = resolveBuildId({ app, resourcesPath: process.resourcesPath });
+    const previousBuild = readBuildMarker(BUILD_MARKER_PATH);
+    const freshBuild = previousBuild?.buildId !== buildId;
+
+    const controllerPrewarm = codexControllerWake.prewarm().catch(error => {
+      logger.warn("codex.bridge_probe_failed", { message: error instanceof Error ? error.message : String(error) });
+      return null;
+    });
+    const prewarm = await runStartupPrewarm({
+      workerPath: path.join(__dirname, "startup-prewarm-worker.cjs"),
+      input: {
+        coreHome: CORE_HOME,
+        resourcesPath: process.resourcesPath,
+        version: app.getVersion(),
+        packaged: app.isPackaged,
+        freshBuild,
+      },
+    });
+    installedRuntimeRoot = prewarm.installedRuntimeRoot;
+    runtimeRootResolved = true;
+
+    if (freshBuild) {
+      const state = resetRuntimeFlags(stateStore);
+      writeBuildMarker(BUILD_MARKER_PATH, buildId);
+      send("launcher:state-changed", state);
+      logger.info("council.fresh_build_state_reset", { previousBuildId: previousBuild?.buildId ?? null, buildId });
+    }
+
     [automationTransport, browserControl] = await Promise.all([
       new DebuggerTransport({ getBrowserHost: () => browserHost }).start(),
       new BrowserControlServer({ logger, getBrowserHost: () => browserHost, getPreferences: () => stateStore.read() }).start(),
@@ -524,15 +560,6 @@ async function start() {
 
     runtimeSupervisor = new RuntimeSupervisor({ app, logger, sourceRoot: SOURCE_ROOT, installedRuntimeRoot, runtimeRootProvider, coreHome: CORE_HOME, browserDescriptorPath: BROWSER_DESCRIPTOR_PATH, publishOperation });
     runtimeHost = new RuntimeHost({ app, logger, sourceRoot: SOURCE_ROOT, installedRuntimeRoot, runtimeRootProvider, browserDescriptorPath: BROWSER_DESCRIPTOR_PATH, publishOperation, supervisor: runtimeSupervisor });
-
-    const buildId = resolveBuildId({ app, resourcesPath: process.resourcesPath });
-    const previousBuild = readBuildMarker(BUILD_MARKER_PATH);
-    const freshBuild = previousBuild?.buildId !== buildId;
-    if (freshBuild) {
-      try { await runtimeSupervisor.shutdown(); } catch (error) { logger.warn("council.fresh_build_shutdown_failed", { message: error instanceof Error ? error.message : String(error) }); }
-      const prepared = prepareFreshBuild({ markerPath: BUILD_MARKER_PATH, buildId, coreHome: CORE_HOME, stateStore });
-      if (prepared.reset) logger.info("council.fresh_build_state_reset", { previousBuildId: prepared.previousBuildId, buildId });
-    }
 
     browserHost = new BrowserHost({
       window: mainWindow,
@@ -545,7 +572,6 @@ async function start() {
       publishState: state => send("launcher:browser-state", state),
     });
 
-    if (app.isPackaged) runtimeRootProvider();
     await browserHost.ready();
     if (freshBuild) await browserHost.clearCachePreservingSession();
     await browserHost.refreshAuthentication().catch(error => logger.warn("browser.session_refresh_failed", { message: error instanceof Error ? error.message : String(error) }));
@@ -559,8 +585,16 @@ async function start() {
     }
   };
 
+  const startInfrastructure = () => {
+    if (!infrastructureStartPromise) {
+      infrastructureStartPromise = initializeServices();
+      infrastructureStartPromise.then(resolveInfrastructureReady, rejectInfrastructureReady);
+    }
+    return infrastructureReady;
+  };
+
   if (smoke) {
-    await initializeServices();
+    await startInfrastructure();
     await loadRenderer(mainWindow);
     const smokeRuntimeRoot = runtimeRootProvider();
     if (app.isPackaged && !smokeRuntimeRoot) throw new Error("Packaged Council smoke test could not install its durable runtime");
@@ -578,14 +612,13 @@ async function start() {
   councilConnectionSupervisor.start();
   const trayAvailable = createTray(logger); if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", showMainWindow);
 
-  // Yield the main process after first paint, then prewarm relay services automatically.
-  setTimeout(() => {
-    void initializeServices().catch(error => {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error("council.background_start_failed", { message });
-      publishOperation({ name: "runtime-start", status: "failed", message });
-    });
-  }, 0);
+  // Prewarm starts automatically after the renderer is painted. Heavy filesystem validation,
+  // repair/copy work, and Codex CLI probing execute in child processes rather than on Electron's main thread.
+  void startInfrastructure().catch(error => {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error("council.background_start_failed", { message });
+    publishOperation({ name: "runtime-start", status: "failed", message });
+  });
 
   app.on("activate", showMainWindow);
   app.on("before-quit", event => { if (exitCommitted) return; event.preventDefault(); void requestQuit(); });
