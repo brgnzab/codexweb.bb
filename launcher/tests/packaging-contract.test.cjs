@@ -32,8 +32,9 @@ test("launcher packages a Windows x64 portable directory without installer targe
   assert.ok(fs.existsSync(path.join(launcherRoot, "assets", "icon.ico")));
   assert.ok(manifest.build.files.includes("electron/**"), "hardened Electron entrypoint must be packaged");
   const packager = read(launcherRoot, "scripts", "package.cjs");
+  assert.match(packager, /const artifactBase = `cwc-personal-\$\{version\}-windows-x64-portable`;/);
   assert.match(packager, /"--dir"/);
-  assert.match(packager, /-portable\\.zip/);
+  assert.match(packager, /Compress-Archive/);
 });
 
 test("packager accepts only Windows x64 and never publishes automatically", () => {
