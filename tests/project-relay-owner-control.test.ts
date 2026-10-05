@@ -21,7 +21,7 @@ const input = (requestId: string, a: RelayPeer["kind"] = "codex", b: RelayPeer["
 const ids = (job: any): [string, string, string] => [job.relayId, job.deliveryId, job.lease];
 
 describe("Owner lifecycle control", () => {
-  test("blocked relays keep bindings across restart until the owner stops them", () => {
+  test("blocked relays release bindings immediately and remain terminal across restart", () => {
     const path = join(root(), "relay.json");
     const service = new ProjectRelayService(path, { run: async () => "unused" });
     const started = service.start(input("request-1"));
@@ -29,18 +29,18 @@ describe("Owner lifecycle control", () => {
     service.submitting(...ids(job));
     service.finish(...ids(job), "Need owner decision.\nCWC_STATE: BLOCKED", "receipt-1");
     expect(service.list()[0]!.state).toBe("blocked");
-    expect(() => service.start(input("request-2"))).toThrow("active or unresolved relay");
+    expect(service.claim("controller")).toBeNull();
+
+    const second = service.start(input("request-2"));
+    expect(second.state).toBe("running");
+    service.cancel(second.id);
 
     const restored = new ProjectRelayService(path, { run: async () => "unused" });
-    expect(restored.list()[0]!.state).toBe("blocked");
-    expect(() => restored.start(input("request-3"))).toThrow("active or unresolved relay");
-
-    restored.cancel(started.id);
-    expect(restored.list()[0]!.state).toBe("stopped");
-    expect(() => restored.start(input("request-4"))).not.toThrow();
+    expect(restored.list().find(relay => relay.id === started.id)!.state).toBe("blocked");
+    expect(restored.start(input("request-3")).state).toBe("running");
   });
 
-  test("a submitted uncertain native delivery remains reserved after Stop until exact reconciliation", () => {
+  test("terminal uncertain native delivery is unclaimable and quarantines only its destination", () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
     const started = service.start(input("request-1"));
     const job: any = service.claim("controller");
@@ -48,28 +48,46 @@ describe("Owner lifecycle control", () => {
     service.fail(...ids(job), "response transport lost after submit");
     expect(service.list()[0]!.state).toBe("uncertain");
     expect(service.list()[0]!.turns.at(-1)!.state).toBe("submitted");
+    expect(service.claim("controller")).toBeNull();
+    expect(() => service.start(input("request-2"))).toThrow("submission quarantine");
 
-    service.cancel(started.id);
-    expect(service.list()[0]!.state).toBe("stopped");
-    expect(() => service.start(input("request-2"))).toThrow("active or unresolved relay");
+    const unrelated = service.start({
+      ...input("request-3"),
+      peers: [
+        { ...peer("codex", 0), conversation: "00000000-0000-0000-0000-000000000007" },
+        { ...peer("work", 1), conversation: "00000000-0000-0000-0000-000000000008" },
+      ],
+    });
+    expect(unrelated.state).toBe("running");
+    service.cancel(unrelated.id);
 
-    const reconcile: any = service.claim("controller");
-    expect(reconcile).toMatchObject({ deliveryId: job.deliveryId, state: "submitted" });
-    service.finish(...ids(reconcile), "Recovered exact answer.\nCWC_STATE: CONTINUE", "receipt-2");
-    expect(service.list()[0]!.state).toBe("stopped");
-    expect(service.list()[0]!.turns).toHaveLength(1);
-    expect(() => service.start(input("request-3"))).not.toThrow();
+    service.finish(...ids(job), "Recovered exact answer.\nCWC_STATE: CONTINUE", "receipt-2");
+    const reconciled = service.list().find(relay => relay.id === started.id)!;
+    expect(reconciled.state).toBe("uncertain");
+    expect(reconciled.turns).toHaveLength(1);
+    expect(reconciled.turns[0]!.state).toBe("completed");
+    expect(service.start(input("request-4")).state).toBe("running");
   });
 
-  test("browser uncertainty remains submitted so Stop cannot silently release an ambiguous send", async () => {
+  test("browser uncertainty releases unrelated work while quarantining only the ambiguous destination", async () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async (_target, _prompt, _deliveryId, onPhase) => { onPhase?.("submit-started"); throw new Error("connection lost after submit"); } });
     const started = service.start(input("request-1", "gw", "work"));
     await service.idle();
-    expect(service.list()[0]!.state).toBe("uncertain");
-    expect(service.list()[0]!.turns.at(-1)!.state).toBe("submitted");
-    service.cancel(started.id);
-    expect(service.list()[0]!.state).toBe("stopped");
-    expect(() => service.start(input("request-2", "gw", "work"))).toThrow("active or unresolved relay");
+    const uncertain = service.list().find(relay => relay.id === started.id)!;
+    expect(uncertain.state).toBe("uncertain");
+    expect(uncertain.turns.at(-1)!.state).toBe("submitted");
+    expect(service.claim("controller")).toBeNull();
+    expect(() => service.start(input("request-2", "gw", "work"))).toThrow("submission quarantine");
+
+    const unrelated = service.start({
+      ...input("request-3", "gw", "work"),
+      peers: [
+        { ...peer("gw", 0), conversation: "https://chatgpt.com/c/owner-control-unrelated" },
+        { ...peer("work", 1), conversation: "00000000-0000-0000-0000-000000000009" },
+      ],
+    });
+    expect(unrelated.state).toBe("running");
+    expect(service.list().find(relay => relay.id === started.id)!.state).toBe("uncertain");
   });
 
   test("restart marks an active relay terminated and only explicit Resume makes its queued delivery claimable", () => {
@@ -236,6 +254,32 @@ describe("Codex Bridge Thread configuration", () => {
     expect(calls).toBe(2);
     expect(service.list()[0]!.state).toBe("uat-ready");
     expect(service.claim(controllerA)).toBeNull();
+  });
+
+  test("the same configured controller is reusable across unrelated completed relay setups", () => {
+    const dir = root();
+    const service = new ProjectRelayService(join(dir, "relay.json"), { run: async () => "unused" }, () => 1_000, join(dir, "controller.json"));
+    service.setController(controllerA);
+
+    service.start({ ...input("run-1"), maxTurns: 2 });
+    let job: any = service.claim(controllerA);
+    expect(job.target.conversation).toBe(peer("codex", 0).conversation);
+    service.submitting(...ids(job));
+    service.finish(...ids(job), "Run 1 first handoff.\nCWC_STATE: CONTINUE", "run-1-a");
+    job = service.claim(controllerA);
+    expect(job.target.conversation).toBe(peer("work", 1).conversation);
+    service.submitting(...ids(job));
+    service.finish(...ids(job), "Run 1 second handoff.\nCWC_STATE: CONTINUE", "run-1-b");
+    expect(service.list().find(relay => relay.requestId === "run-1")!.state).toBe("completed");
+
+    const nextPeers: [RelayPeer, RelayPeer] = [
+      { ...peer("codex", 0), conversation: "00000000-0000-0000-0000-000000000007" },
+      { ...peer("work", 1), conversation: "00000000-0000-0000-0000-000000000008" },
+    ];
+    service.start({ ...input("run-2"), peers: nextPeers, maxTurns: 2 });
+    job = service.claim(controllerA);
+    expect(job.target.conversation).toBe(nextPeers[0].conversation);
+    expect(job.prompt).toBe("Exercise relay lifecycle");
   });
 });
 
