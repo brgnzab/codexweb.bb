@@ -5,16 +5,28 @@ import type { CouncilExecutionPhase } from "./autonomy-errors";
 import { assertChatGptConversationUrl } from "./conversation-registry";
 
 export type RelayPeer = { name: string; kind: "gw" | "codex" | "work"; conversation: string };
-export type RelayState = "running" | "blocked" | "uncertain" | "failed" | "terminated" | "uat-ready" | "stopped" | "cancelled";
+export type RelayState = "running" | "completed" | "blocked" | "uncertain" | "failed" | "terminated" | "uat-ready" | "stopped" | "cancelled";
 type TurnState = "queued" | "claimed" | "submitted" | "completed" | "failed";
 export type RelayTurn = { id: string; peer: number; prompt: string; state: TurnState; answer?: string; signal?: string; lease?: string; worker?: string; claimedAt?: number; receipt?: string; nativeBaselineTurnId?: string };
-export type ProjectRelay = { id: string; requestId: string; name: string; task: string; peers: [RelayPeer, RelayPeer]; maxTurns: number; state: RelayState; turns: RelayTurn[]; result?: string; event?: string; createdAt: string; updatedAt?: string };
+export type ProjectRelay = { id: string; requestId: string; name: string; task: string; peers: [RelayPeer, RelayPeer]; maxTurns: number; segmentStartTurn?: number; state: RelayState; turns: RelayTurn[]; result?: string; event?: string; createdAt: string; updatedAt?: string };
 export type RelayInput = { requestId: string; name: string; task: string; peers: [RelayPeer, RelayPeer]; maxTurns?: number; resumeId?: string };
 export interface RelayGwDriver { run(peer: RelayPeer, prompt: string, deliveryId: string, onPhase?: (phase: CouncilExecutionPhase) => void): Promise<string> }
-const terminal = new Set<RelayState>(["blocked", "uncertain", "failed", "terminated", "uat-ready", "stopped", "cancelled"]);
-const unresolved = new Set<RelayState>(["running", "blocked", "uncertain", "failed", "terminated"]);
+const terminal = new Set<RelayState>(["completed", "blocked", "uncertain", "failed", "terminated", "uat-ready", "stopped", "cancelled"]);
+const globallyReserved = new Set<RelayState>(["running", "terminated"]);
 function conversationKey(peer: RelayPeer): string { return peer.kind === "gw" ? new URL(peer.conversation).pathname.slice(3).toLowerCase() : peer.conversation.toLowerCase(); }
-function reservesBindings(session: ProjectRelay): boolean { return unresolved.has(session.state) || session.turns.some(turn => turn.state === "submitted"); }
+function submittedTombstone(session: ProjectRelay): RelayTurn | undefined {
+  const turn = session.turns.at(-1);
+  return session.state !== "running" && turn?.state === "submitted" && !turn.receipt ? turn : undefined;
+}
+function reservesBindings(session: ProjectRelay): boolean { return globallyReserved.has(session.state); }
+function quarantinesConversation(session: ProjectRelay, key: string): boolean {
+  const turn = submittedTombstone(session);
+  return Boolean(turn && conversationKey(session.peers[turn.peer]!) === key);
+}
+function conflictsWithPeers(session: ProjectRelay, peers: RelayPeer[]): boolean {
+  if (reservesBindings(session)) return session.peers.some(peer => peers.some(other => conversationKey(other) === conversationKey(peer)));
+  return peers.some(peer => quarantinesConversation(session, conversationKey(peer)));
+}
 function resetClaim(turn: RelayTurn): void { turn.lease = undefined; turn.worker = undefined; turn.claimedAt = undefined; }
 function text(value: unknown, name: string, max: number): string {
   if (typeof value !== "string" || !value.trim() || value.length > max) throw new Error(`${name} must be nonempty text of at most ${max} characters`);
@@ -86,7 +98,9 @@ export class ProjectRelayService {
       if (!session || typeof session.id !== "string" || !Array.isArray(session.peers) || session.peers.length !== 2 || !Array.isArray(session.turns) || !session.turns.length || !["running", ...terminal].includes(session.state)) throw new Error("Invalid stored relay");
       session.peers = session.peers.map(relayPeer) as [RelayPeer, RelayPeer];
       session.updatedAt ??= session.createdAt;
+      session.segmentStartTurn ??= 0;
       if (!Number.isInteger(session.maxTurns) || session.maxTurns < 2 || session.maxTurns > 100) throw new Error("Invalid stored relay budget");
+      if (!Number.isInteger(session.segmentStartTurn) || session.segmentStartTurn < 0 || session.segmentStartTurn > session.turns.length) throw new Error("Invalid stored relay segment");
       for (const turn of session.turns) {
         if (!turn || ![0, 1].includes(turn.peer) || typeof turn.id !== "string" || typeof turn.prompt !== "string" || !["queued", "claimed", "submitted", "completed", "failed"].includes(turn.state)) throw new Error("Invalid stored relay delivery");
         if (turn.nativeBaselineTurnId !== undefined && (typeof turn.nativeBaselineTurnId !== "string" || !turn.nativeBaselineTurnId || turn.nativeBaselineTurnId.length > 200)) throw new Error("Invalid stored native submission baseline");
@@ -153,7 +167,7 @@ export class ProjectRelayService {
         const peer = session.peers[turn.peer]!;
         if (peer.kind === "gw") continue;
         const activeClaim = turn.state === "claimed" && this.now() - (turn.claimedAt ?? 0) <= 120000;
-        if (turn.state === "submitted" || activeClaim) {
+        if ((session.state === "running" || session.state === "terminated") && (turn.state === "submitted" || activeClaim)) {
           throw new Error("Cannot change Codex Bridge Thread while a native delivery is active or awaiting exact-response reconciliation");
         }
       }
@@ -170,14 +184,16 @@ export class ProjectRelayService {
   assertBrowserAccess(conversation: string | undefined, agentId: string): void {
     if (!conversation) return;
     const key = conversationKey({ name: "", kind: "gw", conversation });
-    const reservation = this.sessions.find(session => reservesBindings(session) && session.peers.some(peer => conversationKey(peer) === key));
+    const reservation = this.sessions.find(session =>
+      (reservesBindings(session) && session.peers.some(peer => conversationKey(peer) === key))
+      || quarantinesConversation(session, key));
     if (!reservation) return;
     const turn = reservation.turns.at(-1)!;
     const ownedBrowserTurn = reservation.state === "running"
       && (turn.state === "claimed" || turn.state === "submitted")
       && agentId === `relay-${turn.id}`
       && conversationKey(reservation.peers[turn.peer]!) === key;
-    if (!ownedBrowserTurn) throw new Error("This conversation is reserved by an active or unresolved project relay");
+    if (!ownedBrowserTurn) throw new Error("This conversation is reserved by active relay work or an unresolved submission tombstone");
   }
   status(): CodexBridgeStatus {
     const heartbeat = this.bridge && (!this.controllerPath || this.bridge.worker === this.controllerThreadId) ? this.bridge : undefined;
@@ -224,11 +240,11 @@ export class ProjectRelayService {
     const controller = this.authorizedController();
     if (controller && peers.some(peer => peer.kind !== "gw" && peer.conversation === controller)) throw new Error("The configured Codex Bridge Thread cannot also be a project participant");
     if (conversationKey(peers[0]) === conversationKey(peers[1])) throw new Error("Choose two different chats");
-    if (this.sessions.some(session => reservesBindings(session) && session.peers.some(peer => peers.some(other => conversationKey(other) === conversationKey(peer))))) throw new Error("A selected chat already belongs to an active or unresolved relay");
+    if (this.sessions.some(session => conflictsWithPeers(session, peers))) throw new Error("A selected chat already belongs to active relay work or a submission quarantine");
     const maxTurns = raw.maxTurns ?? 20;
     if (!Number.isInteger(maxTurns) || maxTurns < 2 || maxTurns > 100) throw new Error("Turn budget must be 2–100");
     const createdAt = new Date(this.now()).toISOString();
-    const session: ProjectRelay = { id: randomUUID(), requestId, name: text(raw.name, "Project name", 160), task: exactText(raw.task, "Task", 12000), peers, maxTurns, state: "running", turns: [], createdAt, updatedAt: createdAt, event: "Relay started" };
+    const session: ProjectRelay = { id: randomUUID(), requestId, name: text(raw.name, "Project name", 160), task: exactText(raw.task, "Task", 12000), peers, maxTurns, segmentStartTurn: 0, state: "running", turns: [], createdAt, updatedAt: createdAt, event: "Relay started" };
     this.next(session, 0, session.task);
     this.sessions.push(session);
     this.persist();
@@ -255,8 +271,8 @@ export class ProjectRelayService {
     if (session.state === "uat-ready") throw new Error("UAT-ready relay is already complete");
     const controller = this.authorizedController();
     if (controller && session.peers.some(peer => peer.kind !== "gw" && peer.conversation === controller)) throw new Error("The configured Codex Bridge Thread cannot also be a project participant");
-    const conflict = this.sessions.find(other => other.id !== session.id && reservesBindings(other) && other.peers.some(peer => session.peers.some(candidate => conversationKey(candidate) === conversationKey(peer))));
-    if (conflict) throw new Error("A participant chat is now reserved by another active or unresolved relay");
+    const conflict = this.sessions.find(other => other.id !== session.id && conflictsWithPeers(other, session.peers));
+    if (conflict) throw new Error("A participant chat is now reserved by active relay work or a submission quarantine");
     const turn = session.turns.at(-1)!;
     if (turn.state === "submitted") throw new Error("This relay cannot Resume until the submitted delivery has exact-response reconciliation; it will not be replayed");
     if (turn.state === "claimed") { turn.state = "queued"; resetClaim(turn); }
@@ -274,14 +290,25 @@ export class ProjectRelayService {
     if (session.state === "running") this.kick();
     return structuredClone(session);
   }
+  private segmentHandoffs(session: ProjectRelay): number {
+    return session.turns.length - (session.segmentStartTurn ?? 0);
+  }
   private resumeAfterCompleted(session: ProjectRelay, turn: RelayTurn): void {
     const answer = turn.answer;
     if (!answer?.trim()) throw new Error("Completed relay delivery has no resumable answer");
+    if (session.state === "completed") {
+      session.segmentStartTurn = session.turns.length;
+      session.state = "running";
+      session.result = "Owner started another bounded relay segment.";
+      this.next(session, 1 - turn.peer, answer);
+      this.mark(session, "New relay segment started");
+      return;
+    }
     if (turn.signal === "UAT_READY" && turn.peer === 1) {
       session.state = "uat-ready"; session.result = "Review complete; ready for owner UAT."; this.mark(session, "UAT ready"); return;
     }
-    if (session.turns.length >= session.maxTurns) {
-      session.state = "blocked"; session.result = "Relay reached its owner-set turn budget."; this.mark(session, "Handoff limit reached"); return;
+    if (this.segmentHandoffs(session) >= session.maxTurns) {
+      session.segmentStartTurn = session.turns.length;
     }
     if (repeatedExchange(session.turns)) {
       session.state = "blocked"; session.result = "Repeated exchange shows no progress."; this.mark(session, "Repeated response blocked relay"); return;
@@ -304,8 +331,8 @@ export class ProjectRelayService {
       session.state = "blocked"; session.result = "Participant reported a blocker."; this.mark(session, "Participant reported blocker");
     } else if (parsed.signal === "UAT_READY" && turn.peer === 1) {
       session.state = "uat-ready"; session.result = "Review complete; ready for owner UAT."; this.mark(session, "UAT ready");
-    } else if (session.turns.length >= session.maxTurns) {
-      session.state = "blocked"; session.result = "Relay reached its owner-set turn budget."; this.mark(session, "Handoff limit reached");
+    } else if (this.segmentHandoffs(session) >= session.maxTurns) {
+      session.state = "completed"; session.result = "Relay completed its owner-set handoff segment."; this.mark(session, "Handoff segment completed");
     } else if (repeatedExchange(session.turns)) {
       session.state = "blocked"; session.result = "Repeated exchange shows no progress."; this.mark(session, "Repeated response blocked relay");
     } else {
@@ -380,8 +407,9 @@ export class ProjectRelayService {
       const turn = session.turns.at(-1)!;
       const peer = session.peers[turn.peer]!;
       if (peer.kind === "gw" || peer.conversation === workerId) continue;
-      if (turn.state === "submitted" && turn.worker === workerId) return this.job(session, turn); // reconcile only, never send again
+      if (session.state === "terminated" && turn.state === "submitted" && turn.worker === workerId) return this.job(session, turn); // restart reconciliation only
       if (session.state !== "running") continue;
+      if (turn.state === "submitted" && turn.worker === workerId) return this.job(session, turn); // current live delivery only, never replay
       if (turn.state === "claimed" && this.now() - (turn.claimedAt ?? 0) > 120000) turn.state = "queued";
       if (turn.state !== "queued") continue;
       turn.state = "claimed"; turn.lease = randomUUID(); turn.worker = workerId; turn.claimedAt = this.now();
