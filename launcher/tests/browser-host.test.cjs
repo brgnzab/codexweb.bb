@@ -1018,6 +1018,7 @@ test("selecting a task tab shows and focuses its owned Playwright surface", () =
   const focused = [];
   const makeView = (id) => ({
     setVisible: (visible) => visibility.push([id, visible]),
+    setBounds() {},
     webContents: { focus: () => focused.push(id) },
   });
   const first = { id: "tab-first", view: makeView("first") };
