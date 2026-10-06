@@ -169,25 +169,18 @@ describe("Existing-chat project routing", () => {
     expect(relay.turns).toHaveLength(8);
     expect(service.claim("controller")).toBeNull();
   });
-  test("third identical handoff is allowed; a repeated two-turn exchange is blocked", () => {
+  test("owner handoff budget is authoritative even when answers repeat", () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
-    service.start({ ...input(), maxTurns: 10 });
-    for (const body of ["SAME", "SAME", "SAME"]) {
+    service.start({ ...input(), maxTurns: 6 });
+    for (let index = 0; index < 6; index++) {
       const job: any = service.claim("controller");
+      expect(job).not.toBeNull();
       service.submitting(...ids(job));
-      service.finish(...ids(job), body, job.deliveryId);
+      service.finish(...ids(job), "SAME", job.deliveryId);
+      expect(service.list()[0]!.state).toBe(index === 5 ? "completed" : "running");
     }
-    let relay = service.list()[0]!;
-    expect(relay.state).toBe("running");
-    expect(relay.turns).toHaveLength(4);
-    expect(relay.turns[3]!.prompt).toBe("SAME");
-
-    const fourth: any = service.claim("controller");
-    service.submitting(...ids(fourth));
-    service.finish(...ids(fourth), "SAME", fourth.deliveryId);
-    relay = service.list()[0]!;
-    expect(relay.state).toBe("blocked");
-    expect(relay.event).toBe("Repeated response blocked relay");
+    expect(service.list()[0]!.turns).toHaveLength(6);
+    expect(service.claim("controller")).toBeNull();
   });
   test("rejects destination injection, duplicate bindings and concurrent project reuse", () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
@@ -231,13 +224,17 @@ describe("Durability and no duplicate submissions", () => {
     expect(restored.list()[0]!.state).toBe("running");
     expect(restored.list()[0]!.turns).toHaveLength(2);
   });
-  test("expired unsubmitted claim can move safely; stale lease cannot send", () => {
+  test("a live controller can reclaim and submit the same pre-submit assignment without a wall-clock lease expiry", () => {
     let time = 1;
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" }, () => time);
-    service.start(input()); const old: any = service.claim("controller"); time += 120001;
-    expect(() => service.submitting(...ids(old))).toThrow();
-    const next: any = service.claim("replacement"); expect(next.deliveryId).toBe(old.deliveryId); expect(next.lease).not.toBe(old.lease);
-    expect(() => service.submitting(...ids(old))).toThrow(); service.submitting(...ids(next));
+    service.start(input());
+    const first: any = service.claim("controller");
+    time += 10 * 60_000;
+    const resumed: any = service.claim("controller");
+    expect(resumed.deliveryId).toBe(first.deliveryId);
+    expect(resumed.lease).toBe(first.lease);
+    expect(service.claim("replacement")).toBeNull();
+    expect(() => service.submitting(...ids(first))).not.toThrow();
   });
   test("restart at browser send boundary terminates and never replays", async () => {
     const path = join(root(), "relay.json");
