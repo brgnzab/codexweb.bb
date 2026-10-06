@@ -42,12 +42,6 @@ function exact(value: unknown, keys: string[]): asserts value is Record<string, 
 function preSubmitFailureEvent(reason: string): string {
   return /composer did not preserve the complete prompt|prompt integrity/i.test(reason) ? "Composer integrity failure" : "Delivery failed before submit";
 }
-function repeatedExchange(turns: RelayTurn[]): boolean {
-  const completed = turns.filter(turn => turn.state === "completed" && typeof turn.answer === "string");
-  if (completed.length < 4) return false;
-  const last = completed.slice(-4);
-  return last[0]!.answer === last[2]!.answer && last[1]!.answer === last[3]!.answer;
-}
 const CODEX_THREAD_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 function codexThreadId(value: unknown): string {
   const id = text(value, "Codex Bridge Thread", 100).toLowerCase();
@@ -166,7 +160,7 @@ export class ProjectRelayService {
       for (const turn of session.turns) {
         const peer = session.peers[turn.peer]!;
         if (peer.kind === "gw") continue;
-        const activeClaim = turn.state === "claimed" && this.now() - (turn.claimedAt ?? 0) <= 120000;
+        const activeClaim = turn.state === "claimed";
         if (session.state === "running" && (turn.state === "submitted" || activeClaim)) {
           throw new Error("Cannot change Codex Bridge Thread while a native delivery is active or awaiting exact-response reconciliation");
         }
@@ -310,9 +304,6 @@ export class ProjectRelayService {
     if (this.segmentHandoffs(session) >= session.maxTurns) {
       session.segmentStartTurn = session.turns.length;
     }
-    if (repeatedExchange(session.turns)) {
-      session.state = "blocked"; session.result = "Repeated exchange shows no progress."; this.mark(session, "Repeated response blocked relay"); return;
-    }
     session.state = "running";
     session.result = "Owner resumed the relay.";
     this.next(session, 1 - turn.peer, parseRelayAnswer(answer).body);
@@ -333,8 +324,6 @@ export class ProjectRelayService {
       session.state = "uat-ready"; session.result = "Review complete; ready for owner UAT."; this.mark(session, "UAT ready");
     } else if (this.segmentHandoffs(session) >= session.maxTurns) {
       session.state = "completed"; session.result = "Relay completed its owner-set handoff segment."; this.mark(session, "Handoff segment completed");
-    } else if (repeatedExchange(session.turns)) {
-      session.state = "blocked"; session.result = "Repeated exchange shows no progress."; this.mark(session, "Repeated response blocked relay");
     } else {
       this.next(session, 1 - turn.peer, parsed.body);
       this.mark(session, "Response received; next handoff queued");
@@ -408,8 +397,8 @@ export class ProjectRelayService {
       const peer = session.peers[turn.peer]!;
       if (peer.kind === "gw" || peer.conversation === workerId) continue;
       if (session.state !== "running") continue;
-      if (turn.state === "submitted" && turn.worker === workerId) return this.job(session, turn); // current live delivery only, never replay
-      if (turn.state === "claimed" && this.now() - (turn.claimedAt ?? 0) > 120000) turn.state = "queued";
+      if (turn.state === "submitted" && turn.worker === workerId) return this.job(session, turn); // reconciliation only, never replay
+      if (turn.state === "claimed" && turn.worker === workerId) return this.job(session, turn); // reconnect resumes the same pre-submit assignment
       if (turn.state !== "queued") continue;
       turn.state = "claimed"; turn.lease = randomUUID(); turn.worker = workerId; turn.claimedAt = this.now();
       this.mark(session, "Preparing handoff");
@@ -427,7 +416,6 @@ export class ProjectRelayService {
   submitting(relayId: string, deliveryId: string, lease: string, nativeBaselineTurnId?: string): void {
     const { session, turn } = this.claimed(relayId, deliveryId, lease);
     if (session.state !== "running" || turn.state !== "claimed") throw new Error("Desktop delivery cannot be submitted twice");
-    if (this.now() - (turn.claimedAt ?? 0) > 120000) throw new Error("Desktop delivery lease expired before submission");
     if (nativeBaselineTurnId !== undefined && (!nativeBaselineTurnId || nativeBaselineTurnId.length > 200)) throw new Error("Native submission baseline is invalid");
     turn.nativeBaselineTurnId = nativeBaselineTurnId;
     turn.state = "submitted";
