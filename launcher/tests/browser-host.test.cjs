@@ -984,6 +984,35 @@ test("a relay has a usable hidden viewport before the ChatGPT workspace is opene
   assert.deepEqual(BrowserHost.prototype.turnViewportBounds.call(fixture), fixture.bounds);
 });
 
+test("a hidden running task tab stays rendered offscreen with a nonzero viewport", () => {
+  const visibility = [];
+  const bounds = [];
+  const makeView = id => ({
+    setVisible: visible => visibility.push([id, visible]),
+    setBounds: value => bounds.push([id, value]),
+  });
+  const tab = { id: "tab-running-hidden", status: "running", view: makeView("turn") };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    view: makeView("home"),
+    turnTabs: new Map([[tab.id, tab]]),
+    selectedTabId: tab.id,
+    visible: false,
+    surfaceActive: false,
+    boundsReady: false,
+    bounds: { x: 0, y: 0, width: 1, height: 1 },
+    authView: null,
+    window: {
+      getContentBounds: () => ({ x: 0, y: 0, width: 1280, height: 900 }),
+      getContentSize: () => [1280, 900],
+    },
+  });
+
+  BrowserHost.prototype.syncViewVisibility.call(fixture);
+
+  assert.deepEqual(visibility, [["home", false], ["turn", true]]);
+  assert.deepEqual(bounds, [["turn", { x: 1288, y: 0, width: 1280, height: 900 }]]);
+});
+
 test("selecting a task tab shows and focuses its owned Playwright surface", () => {
   const visibility = [];
   const focused = [];
