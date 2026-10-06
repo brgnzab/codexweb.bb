@@ -984,12 +984,18 @@ test("a relay has a usable hidden viewport before the ChatGPT workspace is opene
   assert.deepEqual(BrowserHost.prototype.turnViewportBounds.call(fixture), fixture.bounds);
 });
 
-test("a hidden running task tab stays rendered offscreen with a nonzero viewport", () => {
+test("a hidden running task tab stays offscreen with a nonzero emulated renderer viewport", () => {
   const visibility = [];
   const bounds = [];
+  const emulation = [];
   const makeView = id => ({
     setVisible: visible => visibility.push([id, visible]),
     setBounds: value => bounds.push([id, value]),
+    webContents: {
+      isDestroyed: () => false,
+      enableDeviceEmulation: value => emulation.push([id, "enable", value]),
+      disableDeviceEmulation: () => emulation.push([id, "disable"]),
+    },
   });
   const tab = { id: "tab-running-hidden", status: "running", view: makeView("turn") };
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
@@ -1011,6 +1017,13 @@ test("a hidden running task tab stays rendered offscreen with a nonzero viewport
 
   assert.deepEqual(visibility, [["home", false], ["turn", true]]);
   assert.deepEqual(bounds, [["turn", { x: 1288, y: 0, width: 1280, height: 900 }]]);
+  assert.deepEqual(emulation, [["turn", "enable", {
+    screenPosition: "desktop",
+    screenSize: { width: 1280, height: 900 },
+    viewSize: { width: 1280, height: 900 },
+    deviceScaleFactor: 0,
+    scale: 1,
+  }]]);
 });
 
 test("selecting a task tab shows and focuses its owned Playwright surface", () => {
