@@ -35,7 +35,7 @@ function uncertainSubmissionTombstones(relays) {
 function restoreUncertainSubmissionTombstones(coreHome, tombstones) {
   if (!Array.isArray(tombstones) || tombstones.length === 0) return false;
   const relayPath = path.join(coreHome, "council", "project-relays.json");
-  writePrivateFileAtomic(relayPath, `${JSON.stringify({ version: 1, sessions: tombstones })}\n`);
+  writePrivateFileAtomic(relayPath, `${JSON.stringify({ version: 1, sessions: tombstones })}\n`, { personalRoot: coreHome });
   return true;
 }
 
