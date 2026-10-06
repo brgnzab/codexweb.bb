@@ -211,7 +211,7 @@ describe("Existing-chat project routing", () => {
 });
 
 describe("Durability and no duplicate submissions", () => {
-  test("reconnect reconciles submitted native delivery but waits for explicit Resume before forwarding", () => {
+  test("restart-submitted native delivery is terminal and never auto-claimed", () => {
     const path = join(root(), "relay.json"); let time = 1000;
     const first = new ProjectRelayService(path, { run: async () => "unused" }, () => time);
     first.start(input()); const job: any = first.claim("controller"); first.submitting(...ids(job));
@@ -219,8 +219,11 @@ describe("Durability and no duplicate submissions", () => {
     const restored = new ProjectRelayService(path, { run: async () => "unused" }, () => time);
     expect(restored.list()[0]!.state).toBe("terminated");
     expect(restored.claim("other-controller")).toBeNull();
-    expect(restored.claim("controller")).toMatchObject({ deliveryId: job.deliveryId, state: "submitted" });
+    expect(restored.claim("controller")).toBeNull();
     expect(() => restored.submitting(...ids(job))).toThrow();
+    expect(() => restored.resume(restored.list()[0]!.id)).toThrow("exact-response reconciliation");
+
+    // Exact evidence may still reconcile the tombstone manually, but no controller work is floated.
     restored.finish(...ids(job), answer(0), "receipt"); restored.finish(...ids(job), answer(0), "receipt");
     expect(restored.list()[0]!.state).toBe("terminated");
     expect(restored.list()[0]!.turns).toHaveLength(1);
