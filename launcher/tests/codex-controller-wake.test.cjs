@@ -49,15 +49,19 @@ test("controller activation queues one message to the exact configured native th
   assert.equal(calls[0].args.some(value => /model|reasoning|effort/i.test(value)), false);
 });
 
-test("wake prompt is plain text, location-free and project-agnostic", () => {
+test("wake prompt is plain text, location-free, silent and baseline-aware", () => {
   const prompt = buildWakePrompt();
   assert.equal(prompt, WAKE_PROMPT);
   assert.match(prompt, /Pass the assigned message exactly/);
   assert.match(prompt, /ignore prior project\/controller instructions/);
-  assert.match(prompt, /Stay silent on success/);
-  assert.match(prompt, /report only a concrete delivery failure/);
+  assert.match(prompt, /Do not output progress, commentary, or a success message/);
+  assert.match(prompt, /turnLimit:2/);
+  assert.match(prompt, /includeOutputs:true/);
+  assert.match(prompt, /maxOutputCharsPerItem:20000/);
+  assert.match(prompt, /prior-turn baseline is preserved/);
+  assert.match(prompt, /concrete delivery failure/);
   assert.doesNotMatch(prompt, /\.md|CODEX_CHATGPT_WEB_HOME|docs\//i);
-  assert.doesNotMatch(prompt, /turnLimit|maxOutputChars|receipt|handoff|relayId|deliveryId|lease/i);
+  assert.doesNotMatch(prompt, /relayId|deliveryId|lease|handoff/i);
 });
 test("prewarm caches executable discovery and concurrent reconnects share one queue operation", async () => {
   const calls = [];
