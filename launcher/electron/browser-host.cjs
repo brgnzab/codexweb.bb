@@ -276,6 +276,14 @@ class BrowserHost {
     return constrainBrowserBounds({ x: 0, y: 0, width, height }, { width, height });
   }
 
+  parkedTurnBounds() {
+    const target = this.turnViewportBounds();
+    const [contentWidth] = this.window.getContentSize();
+    // Electron can collapse a hidden WebContentsView to a zero-width renderer viewport on Windows.
+    // Keep active automation surfaces rendered completely outside the window instead.
+    return { x: Math.max(1, Math.round(contentWidth)) + 8, y: 0, width: target.width, height: target.height };
+  }
+
   createTurnTab(traceId, helperPid) {
     if (this.turnTabs.size >= MAX_BROWSER_TABS) {
       throw new Error(
@@ -316,8 +324,8 @@ class BrowserHost {
     };
     this.turnTabs.set(id, tab);
     this.window.contentView.addChildView(view);
-    view.setBounds(this.turnViewportBounds());
-    view.setVisible(false);
+    view.setBounds(this.parkedTurnBounds());
+    view.setVisible(true);
     view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindTurnContents(tab);
     void view.webContents.loadURL(IDLE_BROWSER_URL).catch((error) => {
@@ -764,7 +772,17 @@ class BrowserHost {
     const selected = this.selectedTurnTab();
     this.view.setVisible(visible && !this.authView && !selected);
     for (const tab of this.turnTabs.values()) {
-      tab.view.setVisible(visible && !this.authView && selected?.id === tab.id);
+      const foreground = visible && !this.authView && selected?.id === tab.id;
+      if (foreground) {
+        tab.view.setBounds(this.bounds);
+        tab.view.setVisible(true);
+      } else if (tab.status === "running") {
+        // Preserve a real renderer viewport for background relay automation without covering the launcher UI.
+        tab.view.setBounds(this.parkedTurnBounds());
+        tab.view.setVisible(true);
+      } else {
+        tab.view.setVisible(false);
+      }
     }
     this.authView?.setVisible(visible);
   }
