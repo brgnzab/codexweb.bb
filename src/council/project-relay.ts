@@ -3,6 +3,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync } from "
 import { dirname } from "node:path";
 import type { CouncilExecutionPhase } from "./autonomy-errors";
 import { assertChatGptConversationUrl } from "./conversation-registry";
+import { readCourierFailure } from "../../launcher/electron/courier-diagnostic.cjs";
 
 export type RelayPeer = { name: string; kind: "gw" | "codex" | "work"; conversation: string };
 export type RelayState = "running" | "completed" | "blocked" | "uncertain" | "failed" | "terminated" | "uat-ready" | "stopped" | "cancelled";
@@ -70,12 +71,12 @@ export function relayPeer(value: unknown): RelayPeer {
 }
 export function parseRelayAnswer(answer: string): { body: string; signal: "CONTINUE" | "BLOCKED" | "UAT_READY" } {
   const bounded = exactText(answer, "Relay response", 48000);
-  const match = /(?:^|\n)CWC_STATE: (CONTINUE|BLOCKED|UAT_READY)\s*$/.exec(bounded);
+  const match = /(?:^|\r?\n)CWC_STATE: (CONTINUE|BLOCKED|UAT_READY)\s*$/.exec(bounded);
   // A missing/malformed hint must not trigger another submission to repair formatting.
-  // The exact participant response is still relayed unchanged; this parser only drives CWC state.
+  // Keep protocol status in CWC. Preserve every message character outside the recognized footer.
   if (!match || (bounded.match(/^CWC_STATE:/gm) ?? []).length !== 1) return { body: bounded, signal: "CONTINUE" };
-  const body = bounded.slice(0, match.index).trim();
-  if (!body) throw new Error("Relay response has no visible result");
+  const body = bounded.slice(0, match.index);
+  if (!body.trim()) throw new Error("Relay response has no visible result");
   return { body, signal: match[1] as "CONTINUE" | "BLOCKED" | "UAT_READY" };
 }
 
@@ -198,11 +199,12 @@ export class ProjectRelayService {
   status(): CodexBridgeStatus {
     const heartbeat = this.bridge && (!this.controllerPath || this.bridge.worker === this.controllerThreadId) ? this.bridge : undefined;
     const error = this.controllerError ?? this.storageError;
+    const courierError = readCourierFailure(dirname(dirname(this.path)), this.controllerThreadId, heartbeat?.lastSeen ?? 0);
     return {
       configuredThread: this.controllerThreadId ?? null,
       connected: Boolean(heartbeat && this.now() - heartbeat.lastSeen < 120000),
       ...(heartbeat ? { worker: heartbeat.worker, lastSeen: new Date(heartbeat.lastSeen).toISOString() } : {}),
-      ...(error ? { error: error.message } : {}),
+      ...(error ? { error: error.message } : courierError ? { error: courierError } : {}),
     };
   }
   setController(raw: string): CodexBridgeStatus {
@@ -300,7 +302,7 @@ export class ProjectRelayService {
       session.segmentStartTurn = session.turns.length;
       session.state = "running";
       session.result = "Owner started another bounded relay segment.";
-      this.next(session, 1 - turn.peer, answer);
+      this.next(session, 1 - turn.peer, parseRelayAnswer(answer).body);
       this.mark(session, "New relay segment started");
       return;
     }
@@ -315,7 +317,7 @@ export class ProjectRelayService {
     }
     session.state = "running";
     session.result = "Owner resumed the relay.";
-    this.next(session, 1 - turn.peer, answer);
+    this.next(session, 1 - turn.peer, parseRelayAnswer(answer).body);
     this.mark(session, "Owner resumed relay");
   }
   private require(id: string): ProjectRelay { const session = this.sessions.find(value => value.id === id); if (!session) throw new Error("Unknown relay"); return session; }
@@ -336,7 +338,7 @@ export class ProjectRelayService {
     } else if (repeatedExchange(session.turns)) {
       session.state = "blocked"; session.result = "Repeated exchange shows no progress."; this.mark(session, "Repeated response blocked relay");
     } else {
-      this.next(session, 1 - turn.peer, answer);
+      this.next(session, 1 - turn.peer, parsed.body);
       this.mark(session, "Response received; next handoff queued");
     }
   }

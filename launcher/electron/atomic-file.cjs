@@ -33,16 +33,16 @@ function renameAtomicFile(
   }
 }
 
-function writePrivateFileAtomic(filePath, content) {
+function writePrivateFileAtomic(filePath, content, options) {
   const directory = path.dirname(filePath);
   assertNoReparsePath(filePath);
-  ensurePrivateDirectory(directory);
+  ensurePrivateDirectory(directory, options);
   try { fs.chmodSync(directory, 0o700); } catch {}
   const temporary = `${filePath}.tmp-${process.pid}-${Date.now()}-${++sequence}`;
   try {
     fs.writeFileSync(temporary, content, { flag: "wx", mode: 0o600 });
     renameAtomicFile(temporary, filePath);
-    protectPrivatePath(filePath);
+    protectPrivatePath(filePath, options);
     try { fs.chmodSync(filePath, 0o600); } catch {}
   } finally {
     fs.rmSync(temporary, { force: true });

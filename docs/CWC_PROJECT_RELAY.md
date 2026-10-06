@@ -12,7 +12,7 @@ The owner's latest priority is a usable, robust **GPT Web ↔ existing Codex cha
 
 The launcher Project relay page accepts two existing chat bindings, a project task, and a turn budget. Participant 1 works; participant 2 reviews and can request more work. Completed visible answers alternate between the two fixed destinations. Participants cannot change the destination or grant themselves additional permissions. Existing project context and permissions remain in effect.
 
-The final answer may end with `CWC_STATE: CONTINUE`, `CWC_STATE: BLOCKED`, or `CWC_STATE: UAT_READY`. Only the reviewer's unambiguous UAT_READY finishes the project. BLOCKED reports an owner dependency. A missing or malformed hint simply forwards the answer for review; CWC never submits a second prompt to repair formatting. Repeated identical replies and the owner-set budget stop unproductive loops.
+The final answer may end with `CWC_STATE: CONTINUE`, `CWC_STATE: BLOCKED`, or `CWC_STATE: UAT_READY`. CWC stores the original response and its status internally, and forwards only the message before a recognized footer, preserving its whitespace. Only the reviewer's unambiguous UAT_READY finishes the project. BLOCKED reports an owner dependency. A missing or malformed hint simply forwards the answer for review; CWC never submits a second prompt to repair formatting. Repeated identical replies and the owner-set budget stop unproductive loops.
 
 This route does not require Council SAY/WAKE/SLEEP actions. The existing Council action parser remains strict and its post-submit no-replay rules remain intact.
 

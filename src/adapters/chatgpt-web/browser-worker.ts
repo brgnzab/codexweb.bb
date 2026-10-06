@@ -34,6 +34,7 @@ import {
   CHATGPT_ASSISTANT_TURN_SELECTOR,
   CHATGPT_COMPLETION_ACTION_SELECTOR,
   CHATGPT_COMPOSER_SELECTOR,
+  CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   CHATGPT_EFFORT_ITEM_SELECTOR,
   CHATGPT_EFFORT_MENU_SELECTOR,
@@ -1523,7 +1524,7 @@ export class ChatGptBrowserWorker {
         + (alerts.length > 0 ? `: ${alerts.join(" | ")}` : ""),
       );
     }
-    const send = composerForm.getByTestId("send-button");
+    const send = composerForm.locator(CHATGPT_SEND_BUTTON_SELECTOR);
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
       if (await send.isEnabled().catch(() => false)) return;
@@ -1956,7 +1957,7 @@ export class ChatGptBrowserWorker {
         const composer = await this.activeComposer(page);
         const sendButton = composer
           .locator("xpath=ancestor::form[1]")
-          .getByTestId("send-button");
+          .locator(CHATGPT_SEND_BUTTON_SELECTOR);
         await sendButton.waitFor({ state: "visible", timeout: browserStageTimeouts.send });
         if (!await sendButton.isEnabled()) {
           throw new Error("ChatGPT send button is disabled after the complete prompt was attached");

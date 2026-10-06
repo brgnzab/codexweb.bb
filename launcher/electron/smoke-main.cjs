@@ -1,3 +1,5 @@
+process.env.CODEXWEB_COUNCIL_PRODUCT = "1";
+
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -5,13 +7,23 @@ const { spawnSync } = require("node:child_process");
 const { app } = require("electron");
 const { ensurePackagedRuntime } = require("./runtime-install.cjs");
 const { runtimeInvocation } = require("./runtime-command.cjs");
+const { resolveCwcPaths } = require("./portable-paths.cjs");
 
 const SOURCE_ROOT = path.resolve(__dirname, "../..");
-const configuredUserData = process.env.CODEX_WEB_GPT_LAUNCHER_DATA_DIR?.trim();
-if (configuredUserData) {
-  const launcherData = path.resolve(configuredUserData);
-  fs.mkdirSync(launcherData, { recursive: true, mode: 0o700 });
-  app.setPath("userData", launcherData);
+const resolvedPaths = resolveCwcPaths({
+  isPackaged: app.isPackaged,
+  execPath: process.execPath,
+  launcherDataOverride: process.env.CODEX_WEB_GPT_LAUNCHER_DATA_DIR,
+  coreHomeOverride: process.env.CODEX_CHATGPT_WEB_HOME,
+  defaultLauncherData: app.getPath("userData"),
+  defaultCoreHome: path.join(os.homedir(), ".codex-chatgpt-web"),
+});
+fs.mkdirSync(resolvedPaths.launcherData, { recursive: true, mode: 0o700 });
+app.setPath("userData", resolvedPaths.launcherData);
+if (resolvedPaths.portableRoot) {
+  const logs = path.join(resolvedPaths.launcherData, "logs");
+  fs.mkdirSync(logs, { recursive: true, mode: 0o700 });
+  app.setAppLogsPath(logs);
 }
 
 function writeFatal(error) {
@@ -28,9 +40,7 @@ async function runSmoke() {
   await app.whenReady();
   if (!app.isPackaged) throw new Error("Council package smoke entry requires a packaged Electron application");
 
-  const coreHome = process.env.CODEX_CHATGPT_WEB_HOME?.trim()
-    ? path.resolve(process.env.CODEX_CHATGPT_WEB_HOME.trim())
-    : path.join(os.homedir(), ".codex-chatgpt-web");
+  const coreHome = resolvedPaths.coreHome;
   const installedRuntimeRoot = ensurePackagedRuntime({
     app,
     coreHome,

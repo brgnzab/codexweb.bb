@@ -26,11 +26,11 @@ function isRuntimeUnavailable(error) {
   return error?.code === RUNTIME_UNAVAILABLE_CODE;
 }
 
-function readOwnerDescriptor() {
+function readOwnerDescriptor({ personal = false } = {}) {
   const descriptorPath = ownerDescriptorPath();
   let raw;
   try {
-    verifyPrivatePath(descriptorPath);
+    verifyPrivatePath(descriptorPath, personal ? { personalRoot: configRoot() } : undefined);
     raw = fs.readFileSync(descriptorPath, "utf8");
   } catch (error) {
     if (error?.code === "ENOENT") throw runtimeUnavailableError();
@@ -75,7 +75,7 @@ function safeLimit(value, fallback, max) {
 
 async function ownerRequest(operation, body = {}, options = {}) {
   if (typeof operation !== "string" || !/^[a-z0-9/-]+$/.test(operation) || operation.includes("..")) throw new Error("Council owner operation is invalid");
-  const { endpoint, token } = readOwnerDescriptor();
+  const { endpoint, token } = readOwnerDescriptor(options);
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== "function") throw new Error("Council owner-control fetch is unavailable");
   const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(100, Math.min(30 * 60_000, Math.trunc(options.timeoutMs))) : OWNER_REQUEST_TIMEOUT_MS;

@@ -341,7 +341,7 @@ test("concurrent embedded login requests share one authentication operation", as
 });
 
 test("launcher quit remains gated through an active embedded-browser operation", () => {
-  const source = fs.readFileSync(require.resolve("../electron/main.cjs"), "utf8");
+  const source = fs.readFileSync(require.resolve("../electron/main-council.cjs"), "utf8");
   assert.match(
     source,
     /runtimeHost\?\.currentOperation\(\) \|\| browserHost\?\.currentOperation\(\)/,
@@ -965,6 +965,23 @@ test("selected home surface remains represented while task tabs are retained", (
   assert.equal(snapshot.activeTabId, "home");
   assert.deepEqual(snapshot.tabs.map((tab) => tab.id), ["home", "tab-ready"]);
   assert.equal(snapshot.tabs[0].active, true);
+});
+
+test("a relay has a usable hidden viewport before the ChatGPT workspace is opened", () => {
+  const fixture = {
+    boundsReady: false,
+    bounds: { x: 0, y: 0, width: 1, height: 1 },
+    visible: false,
+    surfaceActive: false,
+    window: { getContentBounds: () => ({ x: 100, y: 50, width: 1280, height: 900 }) },
+  };
+  assert.deepEqual(BrowserHost.prototype.turnViewportBounds.call(fixture), { x: 0, y: 0, width: 1280, height: 900 });
+  assert.equal(browserViewVisible(fixture.visible, fixture.surfaceActive, fixture.boundsReady), false);
+  assert.equal(fixture.boundsReady, false);
+
+  fixture.boundsReady = true;
+  fixture.bounds = { x: 320, y: 400, width: 960, height: 450 };
+  assert.deepEqual(BrowserHost.prototype.turnViewportBounds.call(fixture), fixture.bounds);
 });
 
 test("selecting a task tab shows and focuses its owned Playwright surface", () => {

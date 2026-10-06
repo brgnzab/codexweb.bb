@@ -3,6 +3,7 @@ import {
   CHATGPT_ASSISTANT_TURN_SELECTOR,
   CHATGPT_COMPLETION_ACTION_SELECTOR,
   CHATGPT_COMPOSER_SELECTOR,
+  CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_STOP_BUTTON_SELECTOR,
   CHATGPT_USER_TURN_SELECTOR,
   assertAuthenticatedChatGptPage,
@@ -56,7 +57,26 @@ function emitDeepState(observer: CouncilExecutionObserver | undefined, state: Co
 
 async function visibleComposer(page: Page): Promise<Locator> {
   const composers = page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
-  await composers.last().waitFor({ state: "visible", timeout: PAGE_TIMEOUT_MS });
+  try {
+    await composers.last().waitFor({ state: "visible", timeout: PAGE_TIMEOUT_MS });
+  } catch (error) {
+    const structure = await page.evaluate(() => ({
+      viewport: [innerWidth, innerHeight],
+      editors: [...document.querySelectorAll('[contenteditable="true"], textarea')].map(element => {
+        const bounds = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return {
+          role: element.getAttribute("role"),
+          composer: element.hasAttribute("data-composer-markdown"),
+          form: Boolean(element.closest("form[data-chatgpt-composer]")),
+          size: [Math.round(bounds.width), Math.round(bounds.height)],
+          display: style.display,
+          visibility: style.visibility,
+        };
+      }).slice(0, 8),
+    })).catch(() => "unavailable");
+    throw new Error(`ChatGPT composer unavailable ${JSON.stringify(structure)}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
   await assertAuthenticatedChatGptPage(page);
   return composers.last();
 }
@@ -562,7 +582,7 @@ async function sendAndWait(
   const composer = await attachExactPrompt(page, prompt, signal, onPhase, onExecution);
   await attachFiles(page, composer, attachments, onPhase, onExecution);
   const baseline = await councilTurnDomState(page);
-  const send = composer.locator("xpath=ancestor::form[1]").getByTestId("send-button");
+  const send = composer.locator("xpath=ancestor::form[1]").locator(CHATGPT_SEND_BUTTON_SELECTOR);
   await send.waitFor({ state: "visible", timeout: 20_000 });
   if (!await send.isEnabled()) throw new Error("ChatGPT Council send button is disabled after prompt attachment");
   const submittedAt = Date.now();

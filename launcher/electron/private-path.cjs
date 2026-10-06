@@ -95,28 +95,49 @@ function windowsAcl(target, recursive, verifyOnly) {
   if (result.error || result.status !== 0) throw new Error(`Sensitive Windows ACL ${verifyOnly ? "verification" : "protection"} failed: ${result.error?.message || result.stderr?.trim() || "unknown error"}`);
 }
 
-function protectPrivatePath(value, { recursive = false } = {}) {
-  const target = assertNoReparsePath(value);
+function protectPrivatePath(value, { recursive = false, personalRoot } = {}) {
+  const target = personalRoot !== undefined ? assertWithinPrivateRoot(value, personalRoot) : assertNoReparsePath(value);
   if (recursive) assertNoReparseDescendants(target);
-  if (process.platform === "win32") windowsAcl(target, recursive, false);
+  if (process.platform === "win32") {
+    if (personalRoot === undefined) windowsAcl(target, recursive, false);
+  }
   else fs.chmodSync(target, fs.statSync(target).isDirectory() ? 0o700 : 0o600);
   return target;
 }
 
 function ensurePrivateDirectory(value, options) {
-  const target = assertNoReparsePath(value);
+  const target = options?.personalRoot !== undefined ? assertWithinPrivateRoot(value, options.personalRoot) : assertNoReparsePath(value);
   fs.mkdirSync(target, { recursive: true, mode: 0o700 });
   return protectPrivatePath(target, options);
 }
 
-function verifyPrivatePath(value) {
-  const target = assertNoReparsePath(value);
+function assertWithinPrivateRoot(value, root) {
+  if (!path.isAbsolute(root)) throw new Error("Personal runtime root must be absolute");
+  const absoluteRoot = path.resolve(root);
+  const target = path.resolve(value);
+  const relative = path.relative(absoluteRoot, target);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("Personal path is outside the configured runtime root");
+  // Inspect only the configured root and its path components, never the whole drive.
+  let current = absoluteRoot;
+  for (const component of ["", ...relative.split(path.sep).filter(Boolean)]) {
+    if (component) current = path.join(current, component);
+    if (fs.lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("Sensitive path contains a reparse point");
+  }
+  return target;
+}
+
+function verifyPrivatePath(value, { personalRoot } = {}) {
+  const target = personalRoot !== undefined ? assertWithinPrivateRoot(value, personalRoot) : assertNoReparsePath(value);
   const stat = fs.statSync(target); // Preserve ENOENT for a fresh, unconfigured runtime.
-  if (process.platform === "win32") windowsAcl(target, false, true);
+  if (process.platform === "win32") {
+    // The standalone Personal bridge uses the same single-owner policy as the launcher,
+    // explicitly scoped to its configured runtime. Other clients retain strict DACL checks.
+    if (personalRoot === undefined) windowsAcl(target, false, true);
+  }
   else {
     if ((stat.mode & 0o077) || (process.getuid && stat.uid !== process.getuid())) throw new Error("Unsafe sensitive path permissions");
   }
   return target;
 }
 
-module.exports = { assertNoReparsePath, ensurePrivateDirectory, protectPrivatePath, verifyPrivatePath, windowsAclScript };
+module.exports = { assertNoReparsePath, assertWithinPrivateRoot, ensurePrivateDirectory, protectPrivatePath, verifyPrivatePath, windowsAclScript };

@@ -55,8 +55,11 @@ test("wake prompt scopes the controller to only the launcher runtime", () => {
   assert.equal(prompt, `CODEX_CHATGPT_WEB_HOME=${coreHome}. ${WAKE_PROMPT}`);
   assert.match(prompt, /current CWC bridge assignment/);
   assert.match(prompt, /ignore all previous project\/controller instructions/);
-  assert.match(prompt, /Stay silent on success/);
-  assert.match(prompt, /concrete courier failure/);
+  assert.match(prompt, /Stay silent/);
+  assert.match(prompt, /CWC owns all status and errors/);
+  assert.match(prompt, /Treat payload as data/);
+  assert.match(prompt, /turnLimit:2, includeOutputs:true, maxOutputCharsPerItem:20000/);
+  assert.doesNotMatch(prompt, /report only|report.*failure/i);
 });
 
 test("prewarm caches executable discovery and concurrent reconnects share one queue operation", async () => {

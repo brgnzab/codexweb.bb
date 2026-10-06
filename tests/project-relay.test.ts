@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ProjectRelayService, parseRelayAnswer, relayPeer, type RelayInput, type RelayPeer } from "../src/council/project-relay";
 import { startCouncilHttpServer } from "../src/council/http-server";
 import { CouncilStore } from "../src/council/store";
-const { assertReady, completedAnswer } = require("../launcher/electron/project-relay-desktop.cjs");
+const { assertReady, completedAnswer, observeAnswer } = require("../launcher/electron/project-relay-desktop.cjs");
 const { run: bridgeRun } = require("../scripts/cwc-desktop-bridge.cjs");
 
 const roots: string[] = [];
@@ -35,7 +35,7 @@ describe("Existing-chat project routing", () => {
       const relayInput = input(a, b);
       const service = new ProjectRelayService(join(root(), "relay.json"), { run: async (target, prompt) => {
         calls.push(target.conversation);
-        expect(prompt).toBe(target.name === "Worker" ? relayInput.task : answer(0));
+        expect(prompt).toBe(target.name === "Worker" ? relayInput.task : parseRelayAnswer(answer(0)).body);
         return answer(target.name === "Worker" ? 0 : 1);
       } });
       const started = service.start(relayInput);
@@ -52,7 +52,8 @@ describe("Existing-chat project routing", () => {
       expect(service.claim("controller")).toBeNull();
     });
   }
-  test("relays the exact owner task first and exact raw participant response after that", () => {
+  test("preserves message whitespace and raw receipt while keeping recognized status in the app", () => {
+    expect(parseRelayAnswer("  first\r\nsecond  \r\nCWC_STATE: CONTINUE\r\n")).toEqual({ body: "  first\r\nsecond  ", signal: "CONTINUE" });
     const exactTask = "  HI  ";
     const exactReply = "  participant reply exactly as sent  \nCWC_STATE: CONTINUE";
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
@@ -63,7 +64,8 @@ describe("Existing-chat project routing", () => {
     service.finish(...ids(first), exactReply, "receipt-1");
     expect(service.list()[0]!.turns[0]!.answer).toBe(exactReply);
     const second: any = service.claim("controller");
-    expect(second.prompt).toBe(exactReply);
+    expect(second.prompt).toBe("  participant reply exactly as sent  ");
+    expect(service.list()[0]!.turns[0]!.signal).toBe("CONTINUE");
   });
   test("worker readiness still goes to review and review repairs return to worker", () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
@@ -330,6 +332,54 @@ describe("Durability and no duplicate submissions", () => {
 });
 
 describe("Native desktop adapter", () => {
+  test("one courier transports two projects with helper-owned pending/completion and no status-bearing assignments", async () => {
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
+    const send = async (operation: string, body: any) => {
+      if (operation === "project-relay/list") return { relays: service.list() };
+      if (operation === "project-relay/claim") return service.claim(body.worker);
+      if (operation === "project-relay/submitting") { service.submitting(body.relay_id, body.delivery_id, body.lease, body.baseline_turn_id); return {}; }
+      if (operation === "project-relay/complete") { service.finish(body.relay_id, body.delivery_id, body.lease, body.answer, body.receipt); return {}; }
+      throw new Error("Unexpected operation");
+    };
+    for (const project of ["A", "B"]) {
+      service.start({ ...input(), requestId: project, name: project, task: `Task ${project}`, maxTurns: 4 });
+      for (let i = 0; i < 4; i++) {
+        const assignment = await bridgeRun({ operation: "claim" }, send, controllerId);
+        expect(Object.keys(assignment).sort()).toEqual(["prompt", "threadId"]);
+        expect(assignment.prompt.includes("CWC_STATE")).toBe(false);
+        const job = { target: peer("codex", i % 2), worker: controllerId, prompt: assignment.prompt };
+        await bridgeRun({ operation: "prepare", snapshot: { ...native(job, ""), turns: [] } }, send, controllerId);
+        expect(await bridgeRun({ operation: "claim" }, send, controllerId)).toEqual({ threadId: assignment.threadId });
+        expect(await bridgeRun({ operation: "sent", result: { isError: false } }, send, controllerId)).toBeUndefined();
+        expect(await bridgeRun({ operation: "observe", snapshot: native(job, "", "inProgress") }, send, controllerId)).toEqual({ threadId: assignment.threadId });
+        expect(await bridgeRun({ operation: "observe", snapshot: native(job, `  ${project}-${i}  \nCWC_STATE: CONTINUE`) }, send, controllerId)).toBeUndefined();
+      }
+      expect(await bridgeRun({ operation: "claim" }, send, controllerId)).toBeNull();
+      const finished = service.list().at(-1)!;
+      expect(finished.state).toBe("completed");
+      expect(finished.turns).toHaveLength(4);
+      expect(finished.turns[1]!.prompt).toBe(`  ${project}-0  `);
+      expect(finished.turns[0]!.answer).toBe(`  ${project}-0  \nCWC_STATE: CONTINUE`);
+    }
+    const last = service.list().at(-1)!;
+    const resumed = service.resume(last.id);
+    expect(resumed.turns.at(-1)!.prompt).toBe("  B-3  ");
+  });
+
+  test("raw native send errors settle uncertainty in the app without copying tool content into status", async () => {
+    const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
+    service.start(input()); const job: any = service.claim(controllerId); service.submitting(...ids(job));
+    const send = async (operation: string, body: any) => {
+      if (operation === "project-relay/list") return { relays: service.list() };
+      if (operation === "project-relay/fail") return service.fail(body.relay_id, body.delivery_id, body.lease, body.reason);
+      throw new Error("Unexpected operation");
+    };
+    expect(await bridgeRun({ operation: "sent", result: { isError: true, content: [{ type: "text", text: "private native error content" }] } }, send, controllerId)).toBeUndefined();
+    expect(service.list()[0]!.state).toBe("uncertain");
+    expect(service.list()[0]!.result).toBe("Native courier tool failed; inspect the local courier request.");
+    expect(service.claim(controllerId)).toBeNull();
+  });
+
   test("helper hides relay identifiers and derives controller identity from Codex", async () => {
     const calls: unknown[] = [];
     const claimed = { target: peer("codex", 0), prompt: "exact payload", relayId: "hidden-relay", deliveryId: "hidden-delivery", lease: "hidden-lease" };
@@ -384,6 +434,25 @@ describe("Native desktop adapter", () => {
     });
 
     expect(() => completedAnswer({ ...job, baselineTurnId: "turn-1" }, prior)).toThrow("submission baseline");
+  });
+  test("newest-first native history excludes every pre-submission turn, including older identical text", () => {
+    const job = { target: peer("codex", 0), worker: controllerId, prompt: "Identical transport payload" };
+    const old = delegated(job, "Old answer").turns[0];
+    old.id = "old";
+    const baseline = delegated({ ...job, prompt: "Different latest input" }, "Latest answer").turns[0];
+    baseline.id = "baseline";
+    const snapshot = { ...delegated(job, "Current answer"), page: { order: "newest_first" }, turns: [baseline, old] };
+    expect(assertReady(job, snapshot)).toEqual({ baselineTurnId: "baseline" });
+    const prepared = { ...job, baselineTurnId: "baseline" };
+    expect(observeAnswer(prepared, snapshot)).toBeNull();
+    const current = delegated(job, "Current answer").turns[0];
+    current.id = "current";
+    current.items[1].id = "current-answer";
+    expect(completedAnswer(prepared, { ...snapshot, turns: [current, baseline, old] })).toEqual({
+      answer: "Current answer", receipt: "current:current-answer",
+    });
+    expect(() => completedAnswer(prepared, { ...snapshot, turns: [current] })).toThrow("missing the submission baseline");
+    expect(() => completedAnswer(prepared, { ...snapshot, turns: [current, { ...current, id: "duplicate" }, baseline, old] })).toThrow("duplicated");
   });
   test("native input cannot be spoofed by tool metadata, assistant text, or partial envelopes", () => {
     const job = { target: peer("codex", 0), worker: controllerId, prompt: "exact unique delivery" };
@@ -469,7 +538,7 @@ describe("Native desktop adapter", () => {
     expect(assertReady(job, { ...snapshot, turns: [] })).toEqual({ baselineTurnId: undefined });
     expect(() => assertReady(job, { ...snapshot, turns: [], thread: { ...snapshot.thread, status: { type: "active" } } })).toThrow();
   });
-  test("helper records submit before authorizing native send; completion forwards the full final result", async () => {
+  test("helper records submit before authorizing native send; completion forwards the message without status", async () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" }); service.start(input());
     const send = async (operation: string, body: any) => {
       if (operation === "project-relay/claim") return service.claim(body.worker);
@@ -494,7 +563,7 @@ describe("Native desktop adapter", () => {
     expect(await bridgeRun({ operation: "complete", snapshot: completed }, send, controllerId)).toBeUndefined();
     expect(await bridgeRun({ operation: "complete", snapshot: completed }, send, controllerId)).toBeUndefined();
     expect(service.list()[0]!.turns).toHaveLength(2);
-    expect(service.list()[0]!.turns[1]!.prompt).toBe(answer(0));
+    expect(service.list()[0]!.turns[1]!.prompt).toBe(parseRelayAnswer(answer(0)).body);
   });
 });
 

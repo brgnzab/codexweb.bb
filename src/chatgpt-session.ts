@@ -6,7 +6,9 @@ export const CHATGPT_COMPOSER_SELECTOR = [
   '[data-testid="prompt-textarea"]',
   "#prompt-textarea",
   '[contenteditable="true"][data-lexical-editor="true"]',
+  'form[data-chatgpt-composer] [contenteditable="true"][data-composer-markdown]',
 ].join(", ");
+export const CHATGPT_SEND_BUTTON_SELECTOR = 'button[data-testid="send-button"], button[type="submit"][aria-label="Send"]';
 export const CHATGPT_EFFORT_CONTROL_SELECTOR = [
   'button[aria-haspopup="menu"][data-tone="neutral"]:has([data-animated-slider-trigger="true"])',
   'button[data-testid="model-switcher-dropdown-button"][aria-haspopup="menu"]',

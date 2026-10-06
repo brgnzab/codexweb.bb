@@ -268,6 +268,14 @@ class BrowserHost {
     return this.turnTabs.get(this.selectedTabId) || null;
   }
 
+  turnViewportBounds() {
+    if (this.boundsReady) return this.bounds;
+    // A relay can start from Project relay before the ChatGPT workspace measures its slot.
+    // Give its hidden surface a real viewport until the workspace supplies measured bounds.
+    const { width, height } = this.window.getContentBounds();
+    return constrainBrowserBounds({ x: 0, y: 0, width, height }, { width, height });
+  }
+
   createTurnTab(traceId, helperPid) {
     if (this.turnTabs.size >= MAX_BROWSER_TABS) {
       throw new Error(
@@ -308,7 +316,7 @@ class BrowserHost {
     };
     this.turnTabs.set(id, tab);
     this.window.contentView.addChildView(view);
-    view.setBounds(this.bounds);
+    view.setBounds(this.turnViewportBounds());
     view.setVisible(false);
     view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindTurnContents(tab);

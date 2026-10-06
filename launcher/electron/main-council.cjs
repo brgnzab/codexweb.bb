@@ -404,7 +404,7 @@ function registerIpc({ logger, stateStore }) {
     await infrastructureReady;
     const status = await codexBridgeStatus();
     if (!status.configuredThread) throw new Error("Set a Codex Bridge Thread before reconnecting");
-    if (!status.connected) await codexControllerWake.activate(status.configuredThread);
+    await codexControllerWake.activate(status.configuredThread);
     return codexBridgeStatus();
   });
   handle("launcher:project-relay-list", async () => { await infrastructureReady; return listProjectRelays(); });
@@ -414,7 +414,8 @@ function registerIpc({ logger, stateStore }) {
     if (needsNativeRelay(relay?.peers)) {
       const status = await codexBridgeStatus();
       if (!status.configuredThread) throw new Error("Relay is queued. Set a Codex Bridge Thread in Connections, then reconnect it.");
-      if (!status.connected) await codexControllerWake.activate(status.configuredThread);
+      // A recent heartbeat does not mean the courier is still running its claim loop.
+      await codexControllerWake.activate(status.configuredThread);
     }
     return relay;
   });

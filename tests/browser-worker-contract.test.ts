@@ -5,7 +5,7 @@ import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_PROMPT_INSERT_CHUNK_CHARS, C
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { CHATGPT_CONNECTOR_NAME, defaultChromeExecutable, legacyChatGptConnectorMigrationMessage } from "../src/config";
-import { parseChatGptEffortSliderState } from "../src/chatgpt-session";
+import { CHATGPT_SEND_BUTTON_SELECTOR, parseChatGptEffortSliderState } from "../src/chatgpt-session";
 import type { CodexParsedRequest } from "../src/types";
 
 test("browser turn orchestration retains owned prompt insertion and semantic submission", () => {
@@ -14,7 +14,7 @@ test("browser turn orchestration retains owned prompt insertion and semantic sub
 
   expect(runBrowserTurn).toContain("return this.attachPrompt(");
   expect(runBrowserTurn).toContain('.locator("xpath=ancestor::form[1]")');
-  expect(runBrowserTurn).toContain('.getByTestId("send-button")');
+  expect(runBrowserTurn).toContain('.locator(CHATGPT_SEND_BUTTON_SELECTOR)');
   expect(runBrowserTurn).toContain('await sendButton.press("Enter")');
   expect(runBrowserTurn).toContain("await this.waitForSubmissionAccepted(");
   expect(runBrowserTurn).not.toContain("userTurns.nth(initialUserTurnCount).waitFor");
@@ -807,8 +807,8 @@ test("image attachment readiness uses exact file tiles and not localized remove-
         },
       };
     },
-    getByTestId: (testId: string) => {
-      expect(testId).toBe("send-button");
+    locator: (selector: string) => {
+      expect(selector).toBe(CHATGPT_SEND_BUTTON_SELECTOR);
       return send;
     },
   };

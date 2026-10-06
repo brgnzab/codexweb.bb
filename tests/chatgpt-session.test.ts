@@ -1,9 +1,35 @@
 import { expect, test } from "bun:test";
+import { createRequire } from "node:module";
 import {
   CHATGPT_COMPOSER_SELECTOR,
+  CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   detectChatGptAccountCapabilities,
 } from "../src/chatgpt-session";
+const { createDocument } = createRequire(import.meta.url)("@mixmark-io/domino");
+
+test("current ChatGPT composer excludes the invitation's separate writing editor", () => {
+  const doc = createDocument(`<div contenteditable="true" role="textbox" aria-label="Start writing">Invitation</div>
+    <form data-chatgpt-composer>
+      <div contenteditable="true" role="textbox" data-composer-markdown aria-label="Ask ChatGPT"></div>
+      <button type="button" aria-label="Dictate"></button>
+      <button type="submit" aria-label="Send"></button>
+    </form>`);
+  const composers = doc.querySelectorAll(CHATGPT_COMPOSER_SELECTOR);
+  expect(composers.length).toBe(1);
+  expect(composers[0].getAttribute("aria-label")).toBe("Ask ChatGPT");
+  const send = composers[0].closest("form").querySelectorAll(CHATGPT_SEND_BUTTON_SELECTOR);
+  expect(send.length).toBe(1);
+  expect(send[0].getAttribute("type")).toBe("submit");
+});
+
+test("legacy composer and send controls remain supported", () => {
+  const doc = createDocument(`<form><div id="prompt-textarea" contenteditable="true" data-lexical-editor="true"></div>
+    <button data-testid="send-button" type="submit" aria-label="Send"></button></form>`);
+  const composers = doc.querySelectorAll(CHATGPT_COMPOSER_SELECTOR);
+  expect(composers.length).toBe(1);
+  expect(composers[0].closest("form").querySelectorAll(CHATGPT_SEND_BUTTON_SELECTOR).length).toBe(1);
+});
 
 test("login keeps the established turn composer contract", () => {
   const turnSelectors = CHATGPT_COMPOSER_SELECTOR.split(",").map(selector => selector.trim());

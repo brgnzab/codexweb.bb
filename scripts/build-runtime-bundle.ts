@@ -79,6 +79,13 @@ const install = Bun.spawnSync([process.execPath, "install", "--production", "--f
 if (install.exitCode !== 0) {
   throw new Error(`Runtime dependencies failed to install: ${install.stderr.toString() || install.stdout.toString()}`);
 }
+// Domino's published development fixtures contain names that exceed Windows'
+// extraction limit at ordinary portable locations. Its runtime entrypoint is lib.
+const dominoDevelopmentTests = join(appDir, "node_modules", "@mixmark-io", "domino", "test");
+if (!dominoDevelopmentTests.startsWith(`${appDir}${process.platform === "win32" ? "\\" : "/"}`)) {
+  throw new Error("Dependency fixture cleanup must stay inside the generated runtime app");
+}
+rmSync(dominoDevelopmentTests, { recursive: true, force: true });
 const bunName = process.platform === "win32" ? "bun.exe" : "bun";
 cpSync(embeddedBunExecutable(), join(runtimeDir, bunName));
 if (process.platform !== "win32") chmodSync(join(runtimeDir, bunName), 0o755);

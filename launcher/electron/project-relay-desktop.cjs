@@ -44,16 +44,25 @@ function assertReady(job, raw) {
   deliveries(snapshot);
   const status = snapshot.thread.status?.type;
   if (!["idle", "notLoaded"].includes(status) || snapshot.turns.some(turn => !["completed", "failed", "interrupted"].includes(turn.status))) throw new Error("The bound desktop chat is busy or needs attention; do not send");
-  const baselineTurnId = snapshot.turns.at(-1)?.id;
+  const baselineTurnId = (snapshot.page?.order === "newest_first" ? snapshot.turns[0] : snapshot.turns.at(-1))?.id;
   if (baselineTurnId !== undefined && (typeof baselineTurnId !== "string" || !baselineTurnId)) throw new Error("Desktop read is missing the baseline turn identity");
   return { baselineTurnId };
 }
+function deliveriesAfterBaseline(snapshot, baselineTurnId) {
+  const inputs = deliveries(snapshot);
+  if (!baselineTurnId) return inputs;
+  if (snapshot.page?.order === "newest_first" || snapshot.page?.order === "oldest_first") {
+    const index = snapshot.turns.findIndex(turn => turn.id === baselineTurnId);
+    if (index < 0) throw new Error("Native read is missing the submission baseline; read enough turns before proceeding");
+    const later = new Set((snapshot.page.order === "newest_first"
+      ? snapshot.turns.slice(0, index) : snapshot.turns.slice(index + 1)).map(turn => turn.id));
+    return inputs.filter(value => later.has(value.turn.id));
+  }
+  return inputs.filter(value => value.turn.id !== baselineTurnId);
+}
 function completedAnswer(job, raw) {
   const snapshot = validateTarget(job, raw);
-  const matching = deliveries(snapshot).filter(value =>
-    value.input.prompt === job.prompt
-    && (!job.baselineTurnId || value.turn.id !== job.baselineTurnId)
-  );
+  const matching = deliveriesAfterBaseline(snapshot, job.baselineTurnId).filter(value => value.input.prompt === job.prompt);
   if (matching.length === 0) throw new Error("Exact submitted prompt is missing after the submission baseline; do not forward or replay");
   if (matching.length > 1) throw new Error("Exact submitted prompt is duplicated after the submission baseline; do not forward or replay");
   if (matching[0].input.source && matching[0].input.source !== job.worker) throw new Error("Native delivery source does not match the controller that claimed it");
@@ -64,4 +73,18 @@ function completedAnswer(job, raw) {
   if (typeof turn.id !== "string" || typeof messages[0].id !== "string") throw new Error("Desktop response receipt is missing");
   return { answer: messages[0].text, receipt: `${turn.id}:${messages[0].id}` };
 }
-module.exports = { assertReady, completedAnswer, readSnapshot };
+function observeAnswer(job, raw) {
+  const snapshot = validateTarget(job, raw);
+  const matching = deliveriesAfterBaseline(snapshot, job.baselineTurnId).filter(value => value.input.prompt === job.prompt);
+  if (matching.length > 1) throw new Error("Exact submitted prompt is duplicated; never replay");
+  if (!matching.length) {
+    if (!["active", "idle", "notLoaded"].includes(snapshot.thread.status?.type)) throw new Error("Desktop chat needs attention");
+    return null; // Native delivery may not yet be visible; only the helper decides to read again.
+  }
+  if (matching[0].input.source && matching[0].input.source !== job.worker) throw new Error("Native delivery source does not match the controller");
+  const turn = matching[0].turn;
+  if (turn.error || ["failed", "interrupted"].includes(turn.status)) throw new Error("Native delivery did not complete successfully");
+  if (turn.status === "inProgress") return null;
+  return completedAnswer(job, raw);
+}
+module.exports = { assertReady, completedAnswer, readSnapshot, observeAnswer };
