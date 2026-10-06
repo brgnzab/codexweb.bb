@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, cwc-personal]
+    branches: [main, cwc-personal, uat-portable-e1593ee7]
   pull_request:
 
 permissions:
@@ -30,7 +30,7 @@ jobs:
         shell: pwsh
         run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.3.14 -GitHubEnv $env:GITHUB_ENV
       - name: Full source verification
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/uat-portable-e1593ee7'
         run: bun run verify
       - name: CWC Personal accepted-source gate
         if: github.ref == 'refs/heads/cwc-personal'
@@ -104,12 +104,12 @@ jobs:
             Remove-Item -LiteralPath $qaStdout,$qaStderr -Force -ErrorAction SilentlyContinue
           }
       - run: bun run app:package
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/uat-portable-e1593ee7'
       - name: Native packaged smoke
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/uat-portable-e1593ee7'
         run: bun run app:smoke
       - name: Validate portable artifact structure
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/uat-portable-e1593ee7'
         run: bun run --cwd launcher validate:portable
       - name: Retain packaged smoke diagnostics
         if: failure()
@@ -120,7 +120,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       - name: Retain verified portable package
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/uat-portable-e1593ee7'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: portable-Windows-X64-${{ github.sha }}
