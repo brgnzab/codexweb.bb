@@ -169,6 +169,32 @@ describe("Owner lifecycle control", () => {
     expect(job.deliveryId).toBe(originalTurn);
   });
 
+  test("restart-terminated submitted delivery is terminal, unclaimable and only quarantines its destination", () => {
+    const path = join(root(), "relay.json");
+    const service = new ProjectRelayService(path, { run: async () => "unused" });
+    const started = service.start(input("terminated-submitted"));
+    const submitted: any = service.claim("controller");
+    service.submitting(...ids(submitted));
+
+    const restored = new ProjectRelayService(path, { run: async () => "unused" });
+    const terminated = restored.list().find(relay => relay.id === started.id)!;
+    expect(terminated.state).toBe("terminated");
+    expect(terminated.turns.at(-1)!.state).toBe("submitted");
+    expect(restored.claim("controller")).toBeNull();
+    expect(relayBlocksCacheClear(terminated)).toBe(false);
+    expect(uncertainSubmissionTombstones([terminated])).toHaveLength(1);
+    expect(() => restored.start(input("same-destination"))).toThrow("submission quarantine");
+
+    const unrelated = restored.start({
+      ...input("terminated-unrelated"),
+      peers: [
+        { ...peer("codex", 0), conversation: "00000000-0000-0000-0000-000000000007" },
+        { ...peer("work", 1), conversation: "00000000-0000-0000-0000-000000000008" },
+      ],
+    });
+    expect(unrelated.state).toBe("running");
+  });
+
   test("Stop during a claimed pre-submit delivery requeues the same delivery for explicit Resume", () => {
     const service = new ProjectRelayService(join(root(), "relay.json"), { run: async () => "unused" });
     const started = service.start(input("request-1"));

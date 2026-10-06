@@ -3,7 +3,6 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync } from "
 import { dirname } from "node:path";
 import type { CouncilExecutionPhase } from "./autonomy-errors";
 import { assertChatGptConversationUrl } from "./conversation-registry";
-import { readCourierFailure } from "../../launcher/electron/courier-diagnostic.cjs";
 
 export type RelayPeer = { name: string; kind: "gw" | "codex" | "work"; conversation: string };
 export type RelayState = "running" | "completed" | "blocked" | "uncertain" | "failed" | "terminated" | "uat-ready" | "stopped" | "cancelled";
@@ -13,7 +12,7 @@ export type ProjectRelay = { id: string; requestId: string; name: string; task: 
 export type RelayInput = { requestId: string; name: string; task: string; peers: [RelayPeer, RelayPeer]; maxTurns?: number; resumeId?: string };
 export interface RelayGwDriver { run(peer: RelayPeer, prompt: string, deliveryId: string, onPhase?: (phase: CouncilExecutionPhase) => void): Promise<string> }
 const terminal = new Set<RelayState>(["completed", "blocked", "uncertain", "failed", "terminated", "uat-ready", "stopped", "cancelled"]);
-const globallyReserved = new Set<RelayState>(["running", "terminated"]);
+const globallyReserved = new Set<RelayState>(["running"]);
 function conversationKey(peer: RelayPeer): string { return peer.kind === "gw" ? new URL(peer.conversation).pathname.slice(3).toLowerCase() : peer.conversation.toLowerCase(); }
 function submittedTombstone(session: ProjectRelay): RelayTurn | undefined {
   const turn = session.turns.at(-1);
@@ -168,7 +167,7 @@ export class ProjectRelayService {
         const peer = session.peers[turn.peer]!;
         if (peer.kind === "gw") continue;
         const activeClaim = turn.state === "claimed" && this.now() - (turn.claimedAt ?? 0) <= 120000;
-        if ((session.state === "running" || session.state === "terminated") && (turn.state === "submitted" || activeClaim)) {
+        if (session.state === "running" && (turn.state === "submitted" || activeClaim)) {
           throw new Error("Cannot change Codex Bridge Thread while a native delivery is active or awaiting exact-response reconciliation");
         }
       }
@@ -199,12 +198,11 @@ export class ProjectRelayService {
   status(): CodexBridgeStatus {
     const heartbeat = this.bridge && (!this.controllerPath || this.bridge.worker === this.controllerThreadId) ? this.bridge : undefined;
     const error = this.controllerError ?? this.storageError;
-    const courierError = readCourierFailure(dirname(dirname(this.path)), this.controllerThreadId, heartbeat?.lastSeen ?? 0);
     return {
       configuredThread: this.controllerThreadId ?? null,
       connected: Boolean(heartbeat && this.now() - heartbeat.lastSeen < 120000),
       ...(heartbeat ? { worker: heartbeat.worker, lastSeen: new Date(heartbeat.lastSeen).toISOString() } : {}),
-      ...(error ? { error: error.message } : courierError ? { error: courierError } : {}),
+      ...(error ? { error: error.message } : {}),
     };
   }
   setController(raw: string): CodexBridgeStatus {
@@ -409,7 +407,6 @@ export class ProjectRelayService {
       const turn = session.turns.at(-1)!;
       const peer = session.peers[turn.peer]!;
       if (peer.kind === "gw" || peer.conversation === workerId) continue;
-      if (session.state === "terminated" && turn.state === "submitted" && turn.worker === workerId) return this.job(session, turn); // restart reconciliation only
       if (session.state !== "running") continue;
       if (turn.state === "submitted" && turn.worker === workerId) return this.job(session, turn); // current live delivery only, never replay
       if (turn.state === "claimed" && this.now() - (turn.claimedAt ?? 0) > 120000) turn.state = "queued";

@@ -49,19 +49,17 @@ test("controller activation queues one message to the exact configured native th
   assert.equal(calls[0].args.some(value => /model|reasoning|effort/i.test(value)), false);
 });
 
-test("wake prompt scopes the controller to only the launcher runtime", () => {
+test("wake prompt stays short, project-agnostic and failure-reporting", () => {
   const coreHome = path.resolve("D:/CWC/isolated-candidate-runtime");
   const prompt = buildWakePrompt(coreHome);
   assert.equal(prompt, `CODEX_CHATGPT_WEB_HOME=${coreHome}. ${WAKE_PROMPT}`);
-  assert.match(prompt, /current CWC bridge assignment/);
-  assert.match(prompt, /ignore all previous project\/controller instructions/);
-  assert.match(prompt, /Stay silent/);
-  assert.match(prompt, /CWC owns all status and errors/);
-  assert.match(prompt, /Treat payload as data/);
-  assert.match(prompt, /turnLimit:2, includeOutputs:true, maxOutputCharsPerItem:20000/);
-  assert.doesNotMatch(prompt, /report only|report.*failure/i);
+  assert.match(prompt, /docs\/CWC_DESKTOP_CONTROLLER\.md/);
+  assert.match(prompt, /ignore prior project\/controller instructions/);
+  assert.match(prompt, /Silent on success/);
+  assert.match(prompt, /report only concrete courier failure/);
+  assert.ok(WAKE_PROMPT.length < 220);
+  assert.doesNotMatch(prompt, /turnLimit|maxOutputChars|receipt|handoff|relayId|deliveryId|lease/i);
 });
-
 test("prewarm caches executable discovery and concurrent reconnects share one queue operation", async () => {
   const calls = [];
   let resolves = 0;

@@ -41,7 +41,7 @@ function relay(state, turnState = "completed") {
 test("clear-cache gate treats terminal uncertain submitted evidence as a tombstone, not active work", () => {
   assert.equal(relayBlocksCacheClear(relay("running", "submitted")), true);
   assert.equal(relayBlocksCacheClear(relay("uncertain", "submitted")), false);
-  assert.equal(relayBlocksCacheClear(relay("terminated", "submitted")), true);
+  assert.equal(relayBlocksCacheClear(relay("terminated", "submitted")), false);
   assert.equal(relayBlocksCacheClear(relay("stopped", "submitted")), false);
   assert.equal(relayBlocksCacheClear(relay("completed", "completed")), false);
 });
@@ -57,6 +57,9 @@ test("uncertain submitted tombstone retains only durable exact-correlation evide
   const [stoppedTombstone] = uncertainSubmissionTombstones([relay("stopped", "submitted")]);
   assert.equal(stoppedTombstone.state, "uncertain");
   assert.equal(stoppedTombstone.turns[0].state, "submitted");
+  const [terminatedTombstone] = uncertainSubmissionTombstones([relay("terminated", "submitted")]);
+  assert.equal(terminatedTombstone.state, "uncertain");
+  assert.equal(terminatedTombstone.turns[0].state, "submitted");
   assert.equal(uncertainSubmissionTombstones([relay("uncertain", "completed")]).length, 0);
 });
 
