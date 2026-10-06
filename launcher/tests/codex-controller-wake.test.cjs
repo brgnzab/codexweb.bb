@@ -43,21 +43,20 @@ test("controller activation queues one message to the exact configured native th
   assert.deepEqual(await wake.activate(threadId), { requested: true, threadId });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].executable, "codex.exe");
-  assert.deepEqual(calls[0].args, ["queue", "--thread", threadId, "--message", buildWakePrompt(coreHome)]);
+  assert.deepEqual(calls[0].args, ["queue", "--thread", threadId, "--message", buildWakePrompt()]);
   assert.equal(calls[0].options.cwd, coreHome);
-  assert.equal(calls[0].args.at(-1), `CODEX_CHATGPT_WEB_HOME=${coreHome}. ${WAKE_PROMPT}`);
+  assert.equal(calls[0].args.at(-1), WAKE_PROMPT);
   assert.equal(calls[0].args.some(value => /model|reasoning|effort/i.test(value)), false);
 });
 
-test("wake prompt stays short, project-agnostic and failure-reporting", () => {
-  const coreHome = path.resolve("D:/CWC/isolated-candidate-runtime");
-  const prompt = buildWakePrompt(coreHome);
-  assert.equal(prompt, `CODEX_CHATGPT_WEB_HOME=${coreHome}. ${WAKE_PROMPT}`);
-  assert.match(prompt, /docs\/CWC_DESKTOP_CONTROLLER\.md/);
+test("wake prompt is plain text, location-free and project-agnostic", () => {
+  const prompt = buildWakePrompt();
+  assert.equal(prompt, WAKE_PROMPT);
+  assert.match(prompt, /Pass the assigned message exactly/);
   assert.match(prompt, /ignore prior project\/controller instructions/);
-  assert.match(prompt, /Silent on success/);
-  assert.match(prompt, /report only concrete courier failure/);
-  assert.ok(WAKE_PROMPT.length < 220);
+  assert.match(prompt, /Stay silent on success/);
+  assert.match(prompt, /report only a concrete delivery failure/);
+  assert.doesNotMatch(prompt, /\.md|CODEX_CHATGPT_WEB_HOME|docs\//i);
   assert.doesNotMatch(prompt, /turnLimit|maxOutputChars|receipt|handoff|relayId|deliveryId|lease/i);
 });
 test("prewarm caches executable discovery and concurrent reconnects share one queue operation", async () => {
