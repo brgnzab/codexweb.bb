@@ -279,9 +279,29 @@ class BrowserHost {
   parkedTurnBounds() {
     const target = this.turnViewportBounds();
     const [contentWidth] = this.window.getContentSize();
-    // Electron can collapse a hidden WebContentsView to a zero-width renderer viewport on Windows.
-    // Keep active automation surfaces rendered completely outside the window instead.
     return { x: Math.max(1, Math.round(contentWidth)) + 8, y: 0, width: target.width, height: target.height };
+  }
+
+  emulateTurnViewport(tab) {
+    const contents = tab?.view?.webContents;
+    if (!contents || contents.isDestroyed?.()) return;
+    const target = this.turnViewportBounds();
+    // A fully clipped WebContentsView can report a 0x0 Blink viewport on Windows even when
+    // its native bounds are nonzero. Electron's device emulation overrides the renderer
+    // viewport without making the background automation surface visible to the owner.
+    contents.enableDeviceEmulation?.({
+      screenPosition: "desktop",
+      screenSize: { width: target.width, height: target.height },
+      viewSize: { width: target.width, height: target.height },
+      deviceScaleFactor: 0,
+      scale: 1,
+    });
+  }
+
+  restoreTurnViewport(tab) {
+    const contents = tab?.view?.webContents;
+    if (!contents || contents.isDestroyed?.()) return;
+    contents.disableDeviceEmulation?.();
   }
 
   createTurnTab(traceId, helperPid) {
@@ -326,6 +346,7 @@ class BrowserHost {
     this.window.contentView.addChildView(view);
     view.setBounds(this.parkedTurnBounds());
     view.setVisible(true);
+    this.emulateTurnViewport(tab);
     view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindTurnContents(tab);
     void view.webContents.loadURL(IDLE_BROWSER_URL).catch((error) => {
@@ -774,13 +795,17 @@ class BrowserHost {
     for (const tab of this.turnTabs.values()) {
       const foreground = visible && !this.authView && selected?.id === tab.id;
       if (foreground) {
+        this.restoreTurnViewport(tab);
         tab.view.setBounds(this.bounds);
         tab.view.setVisible(true);
       } else if (tab.status === "running") {
-        // Preserve a real renderer viewport for background relay automation without covering the launcher UI.
+        // Keep the automation renderer alive offscreen and override its Blink viewport so
+        // Playwright still sees normal ChatGPT layout while Project Relay stays foreground.
         tab.view.setBounds(this.parkedTurnBounds());
+        this.emulateTurnViewport(tab);
         tab.view.setVisible(true);
       } else {
+        this.restoreTurnViewport(tab);
         tab.view.setVisible(false);
       }
     }
