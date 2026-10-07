@@ -72,7 +72,9 @@ test("legacy-named launcher bases remain only as demonstrated current dependenci
   assert.match(runtime, /extends legacy\.RuntimeHost/);
   assert.match(supervisor, /require\("\.\/runtime-supervisor-legacy\.cjs"\)/);
   assert.match(supervisor, /extends legacy\.RuntimeSupervisor/);
-  assert.equal(fs.existsSync(path.join(repoRoot, "docs", "CWC_LEGACY_CLEANUP_RETENTION.md")), true);
+  const policy = read(repoRoot, "docs", "CWC_PERSONAL_FORK_POLICY.md");
+  assert.match(policy, /runtime-legacy\.cjs/);
+  assert.match(policy, /runtime-supervisor-legacy\.cjs/);
 });
 
 test("packaged browser helper keeps only its current verification-path compatibility helper", () => {

@@ -61,5 +61,7 @@ test("supply-chain lifecycle inventory is committed and callable", () => {
   const manifest = JSON.parse(read(repoRoot, "package.json"));
   assert.equal(manifest.scripts["supply-chain:hooks"], "bun run scripts/audit-install-hooks.ts");
   assert.equal(fs.existsSync(path.join(repoRoot, "scripts", "audit-install-hooks.ts")), true);
-  assert.equal(fs.existsSync(path.join(repoRoot, "docs", "CWC_SUPPLY_CHAIN_AUDIT.md")), true);
+  const sourceRun = read(repoRoot, "docs", "CWC_SOURCE_RUN.md");
+  assert.match(sourceRun, /supply-chain:hooks/);
+  assert.match(sourceRun, /audit-install-hooks\.ts/);
 });

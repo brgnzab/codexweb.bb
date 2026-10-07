@@ -47,3 +47,13 @@ The source launcher is intentionally narrow. It does not:
 - perform release/update checks or remote executable acquisition.
 
 The application continues to use the existing hardened runtime, browser, authentication, loopback, origin/path validation, transaction, and cleanup boundaries.
+
+## Supply-chain verification
+
+Both root and launcher dependencies must be installed from their committed lockfiles with `bun install --frozen-lockfile`. The repository keeps the lifecycle-hook inventory callable through:
+
+```powershell
+bun run supply-chain:hooks
+```
+
+That command runs `scripts/audit-install-hooks.ts` against the installed root and launcher dependency trees. CI and release workflows also pin the accepted Bun and Node versions and use frozen installs. Do not replace these checks with unconstrained dependency updates.
