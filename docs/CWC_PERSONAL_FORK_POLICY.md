@@ -30,3 +30,16 @@ Any future upstream change must be reviewed against the CWC Personal locked requ
 ## Licensing and attribution
 
 The upstream MIT `LICENSE` file and attribution must remain intact. CWC Personal changes must not remove or obscure upstream license notices required by that license.
+
+## Known-good recovery point
+
+The accepted pre-cleanup recovery source is `d036834cb69d0be4ced4a84683fe84c314efe456`, preserved on branch `known-good-d036834`. Cleanup work must not advance, rewrite, or repurpose that branch.
+
+## Active legacy-named dependencies
+
+Do not delete files solely because their names contain `legacy`. The current launcher still depends on:
+
+- `launcher/electron/runtime-legacy.cjs`
+- `launcher/electron/runtime-supervisor-legacy.cjs`
+
+They may be removed only after the active runtime/supervisor inheritance is intentionally migrated and equivalent runtime evidence passes.

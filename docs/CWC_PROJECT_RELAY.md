@@ -1,8 +1,8 @@
 # CWC Personal: existing-chat project relay
 
-## Owner's requirement (2026-09-28)
+## Product requirement
 
-Remove the owner from copying prompts/results between existing GPT Web, Codex, and Work chats. Support GPT Web ↔ GPT Web, GPT Web ↔ Codex/Work, and Codex/Work ↔ Codex/Work. Continue useful work and review automatically until a real owner blocker/decision or a UAT-ready result. The owner's instructions are authoritative; the tracker is a guide. Build CWC-017/G9 and CWC-018/G10 together before independent QA.
+Remove the owner from copying prompts/results between existing GPT Web, Codex, and Work chats. Support GPT Web ↔ GPT Web, GPT Web ↔ Codex/Work, and Codex/Work ↔ Codex/Work. Continue useful work and review automatically until a real owner blocker/decision or a UAT-ready result. The owner's instructions are authoritative; the tracker is a guide.
 
 The owner selected existing desktop chats. Dedicated CLI conversations are not a substitute. The bridge controller, when authorized, is only a courier; it is not a replacement project participant. No merge, tag, release, or UAT approval is implied.
 
@@ -21,16 +21,16 @@ This route does not require Council SAY/WAKE/SLEEP actions. The existing Council
 - Exact GPT Web conversation URLs use the existing persistent browser transport, without conversation resurrection or new-chat fallback.
 - Existing native Codex/Work chat IDs use an owner-authorized controller running inside Codex with its native chat tools. When a native relay starts/resumes and the configured controller is disconnected, the launcher requests a one-shot activation of that exact saved controller; Connections also exposes a manual **Reconnect controller** action. The local helper is `scripts/cwc-desktop-bridge.cjs`; it talks only to the authenticated loopback owner API. It never prints credentials.
 - A delivery is durably marked submitted before calling an external send. An uncertain delivery is never automatically replayed. A desktop controller reconnects by inspecting the exact prompt in the bound chat and accepting only that turn's completed final answer.
-- A claimed but unsubmitted desktop delivery may be reclaimed after its two-minute lease expires. The old lease cannot send or complete it.
+- A claimed but unsubmitted desktop delivery stays bound to the configured controller while the process is live; reconnect resumes that same pre-submit assignment. On restart, only pre-submit claimed work may be safely requeued. Submitted or uncertain work is never automatically replayed.
 - Cancellation prevents future handoffs; it cannot undo a message already submitted. A cancelled relay with an outstanding submission continues reserving its chats until the response is reconciled.
 - State is private in `council/project-relays.json`. It contains prompts and answers; never publish it or bridge request files. Storage failure stops delivery.
 
 ## Desktop controller prerequisite
 
-Codex app tools are available inside a Codex chat, not directly to a standalone Node process. The shipped helper and controller instructions bridge that boundary without starting substitute CLI sessions or reading private app databases. The controller must be running, on the same host and CWC runtime home, with permission to coordinate the selected chats. The UI reports its recent heartbeat. Without it, desktop deliveries remain queued; GPT Web-only projects can still run.
+Codex app tools are available inside a Codex chat, not directly to a standalone Node process. CWC stores the owner-selected controller thread and queues a bounded, plain-text one-shot activation to that exact thread when native relay work needs it. The controller uses the local bridge helper mechanically to claim, prepare, complete, or fail the current assignment; payload text is data and an uncertain send is never retried. The controller must be on the same host and authorized for the selected chats. Without a usable controller, native deliveries remain queued while GPT Web-only projects can still run.
 
-The controller setup instructions are in [CWC_DESKTOP_CONTROLLER.md](CWC_DESKTOP_CONTROLLER.md). Creating a new controller chat requires owner authorization. Recurring wakeups also require an explicitly requested automation. This implementation does not silently install background services or change global Codex settings.
+Creating or replacing the controller chat requires owner authorization. CWC does not silently install background services or change global Codex settings.
 
 ## Validation boundary
 
-DEV tests exercise routing, native response correlation, HTTP authorization, cancellation, restart, and duplicate prevention with controlled adapters. They are not proof of independent live G9/G10 acceptance. The immediate live gate must demonstrate useful GPT Web ↔ Codex task delivery in both directions, review/repair, and a final result in existing chats without duplicate submissions. Broader pairing coverage is deferred under the owner's latest priority. Marker loops are supporting diagnostics, not the product goal. Report actual defects and coverage; do not claim a statistical defect-free percentage from a test count.
+DEV tests exercise routing, native response correlation, HTTP authorization, cancellation, restart, and duplicate prevention with controlled adapters. Source tests are not a substitute for independent live functional acceptance. A release candidate must demonstrate useful delivery in the supported existing-chat pairings without duplicate submissions, including review/repair and terminal completion. Marker loops are supporting diagnostics, not the product goal. Report actual defects and coverage; do not claim a statistical defect-free percentage from a test count.

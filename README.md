@@ -2,7 +2,7 @@
 
 ## CWC Personal project workflow
 
-The personal fork's purpose is to remove manual prompt/result copy-paste between existing GPT Web, Codex, and Work chats. Use **Project relay** to bind a worker and reviewer and continue their task until a real blocker or UAT-ready result. GPT Web pairs use the browser runtime; native Codex/Work deliveries require the owner-authorized desktop controller. See [project relay and its validation boundary](docs/CWC_PROJECT_RELAY.md) and [controller setup](docs/CWC_DESKTOP_CONTROLLER.md). The Council features below remain available.
+The personal fork's purpose is to remove manual prompt/result copy-paste between existing GPT Web, Codex, and Work chats. Use **Project relay** to bind a worker and reviewer and continue their task until a real blocker or UAT-ready result. GPT Web pairs use the browser runtime; native Codex/Work deliveries require the owner-authorized desktop controller. See [project relay and its validation boundary](docs/CWC_PROJECT_RELAY.md). The Council features below remain available.
 
 **A standalone Electron-first mission control where persistent ChatGPT conversations can operate as a managed AI team with durable collaboration, typed execution telemetry, auditable operator actions, and fail-closed browser automation.**
 
@@ -103,18 +103,8 @@ bun run app
 
 ## Verification and releases
 
-Council 4.1 was verified through the complete Windows, macOS, and Ubuntu matrix before release. The required gate is:
+CWC Personal targets **Windows 11 x64**. The `cwc-personal` branch runs the accepted source gate: focused relay tests, root and launcher typechecks, launcher build, and the active launcher test suite. Packaging is intentionally not performed by `cwc-personal` CI.
 
-```text
-bun run verify
-→ native Electron package
-→ packaged application smoke
-```
+Release packaging is performed from `main`. The release workflow is manual, requires explicit owner approval, runs full verification, builds the Windows x64 portable package, validates the portable artifact, and publishes checksummed release assets. CWC Personal does not ship an installer, self-updater, startup persistence, macOS package, or Linux package.
 
-Pull requests also run `actionlint`, retain verified Electron packages, validate the Windows PowerShell installer, and prepare the AVX2-independent Windows Bun runtime.
-
-Stable releases build native macOS ARM64 and Intel artifacts, Windows x64, Linux x64, runtime archives, license material, installers, and `checksums.txt`. Every published asset must appear in `checksums.txt` before the release is created or updated.
-
-The updater reads stable releases from `Nolane-x/codexweb`, verifies the selected asset against `checksums.txt`, and asks the user to choose **Update now**, **Later**, or **Skip this version**. There is no silent install.
-
-See [`docs/releases/v4.1.0.md`](docs/releases/v4.1.0.md) for the complete Council 4.1 release notes and verification lineage.
+The reviewed upstream Council 4.1.0 baseline remains preserved on the immutable `upstream-v4.1.0` branch. Current CWC Personal behavior is defined by this fork.
