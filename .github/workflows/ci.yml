@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, cwc-personal]
+    branches: [main, cwc-personal, uat-portable-2d7f875f]
   pull_request:
 
 permissions:
@@ -33,7 +33,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: bun run verify
       - name: CWC Personal accepted-source gate
-        if: github.ref == 'refs/heads/cwc-personal'
+        if: github.ref == 'refs/heads/cwc-personal' || github.ref == 'refs/heads/uat-portable-2d7f875f'
         shell: pwsh
         run: |
           bun test tests/project-relay.test.ts
@@ -106,10 +106,10 @@ jobs:
       - run: bun run app:package
         if: github.ref == 'refs/heads/main'
       - name: Native packaged smoke
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/uat-portable-2d7f875f'
         run: bun run app:smoke
       - name: Validate portable artifact structure
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/uat-portable-2d7f875f'
         run: bun run --cwd launcher validate:portable
       - name: Retain packaged smoke diagnostics
         if: failure()
@@ -120,7 +120,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       - name: Retain verified portable package
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/uat-portable-2d7f875f'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: portable-Windows-X64-${{ github.sha }}
