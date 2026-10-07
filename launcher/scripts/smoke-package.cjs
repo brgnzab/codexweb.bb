@@ -76,7 +76,14 @@ try {
 
   if (!fs.existsSync(markerPath)) throw new Error("Portable launcher did not write its readiness marker");
   const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
-  if (marker.ok !== true || marker.packaged !== true || marker.runtimeVerified !== true || marker.version !== expectedVersion || marker.platform !== "win32") {
+  if (marker.ok !== true
+    || marker.packaged !== true
+    || marker.runtimeVerified !== true
+    || marker.backgroundViewportVerified !== true
+    || marker.backgroundViewport?.viewport?.width < 320
+    || marker.backgroundViewport?.viewport?.height < 200
+    || marker.version !== expectedVersion
+    || marker.platform !== "win32") {
     throw new Error(`Unexpected portable launcher marker: ${JSON.stringify(marker)}`);
   }
 

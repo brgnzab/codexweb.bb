@@ -13,6 +13,7 @@ const {
   BrowserHost,
   isChatGptCloudflareChallengeResponse,
   isTemporaryChatUrl,
+  parkedTurnBoundsForWindow,
 } = require("../electron/browser-host.cjs");
 
 test("only an explicit Cloudflare challenge on a ChatGPT backend response triggers recovery", () => {
@@ -984,18 +985,12 @@ test("a relay has a usable hidden viewport before the ChatGPT workspace is opene
   assert.deepEqual(BrowserHost.prototype.turnViewportBounds.call(fixture), fixture.bounds);
 });
 
-test("a hidden running task tab stays offscreen with a nonzero emulated renderer viewport", () => {
+test("a hidden running task tab stays native-sized with a one-pixel parent intersection", () => {
   const visibility = [];
   const bounds = [];
-  const emulation = [];
   const makeView = id => ({
     setVisible: visible => visibility.push([id, visible]),
     setBounds: value => bounds.push([id, value]),
-    webContents: {
-      isDestroyed: () => false,
-      enableDeviceEmulation: value => emulation.push([id, "enable", value]),
-      disableDeviceEmulation: () => emulation.push([id, "disable"]),
-    },
   });
   const tab = { id: "tab-running-hidden", status: "running", view: makeView("turn") };
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
@@ -1013,17 +1008,18 @@ test("a hidden running task tab stays offscreen with a nonzero emulated renderer
     },
   });
 
+  assert.deepEqual(
+    parkedTurnBoundsForWindow(1280, { x: 0, y: 0, width: 1280, height: 900 }),
+    { x: 1279, y: 0, width: 1280, height: 900 },
+  );
+
   BrowserHost.prototype.syncViewVisibility.call(fixture);
 
   assert.deepEqual(visibility, [["home", false], ["turn", true]]);
-  assert.deepEqual(bounds, [["turn", { x: 1288, y: 0, width: 1280, height: 900 }]]);
-  assert.deepEqual(emulation, [["turn", "enable", {
-    screenPosition: "desktop",
-    screenSize: { width: 1280, height: 900 },
-    viewSize: { width: 1280, height: 900 },
-    deviceScaleFactor: 0,
-    scale: 1,
-  }]]);
+  assert.deepEqual(bounds, [["turn", { x: 1279, y: 0, width: 1280, height: 900 }]]);
+
+  const source = fs.readFileSync(require.resolve("../electron/browser-host.cjs"), "utf8");
+  assert.doesNotMatch(source, /enableDeviceEmulation|disableDeviceEmulation/);
 });
 
 test("selecting a task tab shows and focuses its owned Playwright surface", () => {

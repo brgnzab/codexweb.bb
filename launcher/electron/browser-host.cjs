@@ -93,6 +93,11 @@ function normalizeBounds(bounds) {
   };
 }
 
+function parkedTurnBoundsForWindow(contentWidth, target) {
+  const width = Math.max(1, Math.round(Number.isFinite(contentWidth) ? contentWidth : 1));
+  return { x: Math.max(0, width - 1), y: 0, width: target.width, height: target.height };
+}
+
 function allowedAuthUrl(value) {
   let parsed;
   try {
@@ -279,29 +284,11 @@ class BrowserHost {
   parkedTurnBounds() {
     const target = this.turnViewportBounds();
     const [contentWidth] = this.window.getContentSize();
-    return { x: Math.max(1, Math.round(contentWidth)) + 8, y: 0, width: target.width, height: target.height };
-  }
-
-  emulateTurnViewport(tab) {
-    const contents = tab?.view?.webContents;
-    if (!contents || contents.isDestroyed?.()) return;
-    const target = this.turnViewportBounds();
-    // A fully clipped WebContentsView can report a 0x0 Blink viewport on Windows even when
-    // its native bounds are nonzero. Electron's device emulation overrides the renderer
-    // viewport without making the background automation surface visible to the owner.
-    contents.enableDeviceEmulation?.({
-      screenPosition: "desktop",
-      screenSize: { width: target.width, height: target.height },
-      viewSize: { width: target.width, height: target.height },
-      deviceScaleFactor: 0,
-      scale: 1,
-    });
-  }
-
-  restoreTurnViewport(tab) {
-    const contents = tab?.view?.webContents;
-    if (!contents || contents.isDestroyed?.()) return;
-    contents.disableDeviceEmulation?.();
+    // Do not use Electron device emulation here: the packaged Windows build can terminate
+    // natively when emulation is applied to a newly created WebContentsView. Keep one physical
+    // pixel of the running view inside the parent instead; packaged smoke verifies that this
+    // avoids the fully clipped 0x0 renderer path while preserving the real native viewport.
+    return parkedTurnBoundsForWindow(contentWidth, target);
   }
 
   createTurnTab(traceId, helperPid) {
@@ -346,7 +333,6 @@ class BrowserHost {
     this.window.contentView.addChildView(view);
     view.setBounds(this.parkedTurnBounds());
     view.setVisible(true);
-    this.emulateTurnViewport(tab);
     view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindTurnContents(tab);
     void view.webContents.loadURL(IDLE_BROWSER_URL).catch((error) => {
@@ -795,17 +781,15 @@ class BrowserHost {
     for (const tab of this.turnTabs.values()) {
       const foreground = visible && !this.authView && selected?.id === tab.id;
       if (foreground) {
-        this.restoreTurnViewport(tab);
         tab.view.setBounds(this.bounds);
         tab.view.setVisible(true);
       } else if (tab.status === "running") {
-        // Keep the automation renderer alive offscreen and override its Blink viewport so
-        // Playwright still sees normal ChatGPT layout while Project Relay stays foreground.
+        // A completely clipped Windows WebContentsView produced a 0x0 Blink viewport.
+        // Park the running surface with a one-pixel parent intersection so Chromium keeps
+        // its normal native layout without covering the Project Relay workspace.
         tab.view.setBounds(this.parkedTurnBounds());
-        this.emulateTurnViewport(tab);
         tab.view.setVisible(true);
       } else {
-        this.restoreTurnViewport(tab);
         tab.view.setVisible(false);
       }
     }
@@ -1510,6 +1494,7 @@ module.exports = {
   IDLE_BROWSER_URL,
   isChatGptCloudflareChallengeResponse,
   isTemporaryChatUrl,
+  parkedTurnBoundsForWindow,
   sessionEvidenceAuthenticated,
   TEMPORARY_CHAT_URL,
 };
