@@ -29,13 +29,44 @@ async function executeSmoke(scratch, overrides = {}) {
     getVersion: () => "4.1.0",
     exit: code => exited.resolve(code),
   };
+  class FakeWebContents {
+    constructor() { this.destroyed = false; }
+    async loadURL() {}
+    async executeJavaScript() { return { width: 800, height: 600 }; }
+    isDestroyed() { return this.destroyed; }
+    close() { this.destroyed = true; }
+  }
+  class FakeBrowserWindow {
+    constructor() {
+      this.destroyed = false;
+      this.webContents = new FakeWebContents();
+      this.contentView = { addChildView() {}, removeChildView() {} };
+    }
+    async loadURL() {}
+    getContentSize() { return [800, 600]; }
+    isDestroyed() { return this.destroyed; }
+    destroy() { this.destroyed = true; }
+  }
+  class FakeWebContentsView {
+    constructor() { this.webContents = new FakeWebContents(); }
+    setBounds() {}
+    setVisible() {}
+  }
   const modules = {
     "node:fs": fs,
     "node:path": path,
     "node:os": { homedir: () => legacyHome },
     "node:child_process": { spawnSync: () => ({ status: 0, stdout: "4.1.0\n" }) },
-    electron: { app },
+    electron: { app, BrowserWindow: FakeBrowserWindow, WebContentsView: FakeWebContentsView },
     "./portable-paths.cjs": { resolveCwcPaths },
+    "./browser-host.cjs": {
+      parkedTurnBoundsForWindow: (contentWidth, target) => ({
+        x: Math.max(0, Math.max(1, Math.round(contentWidth)) - 1),
+        y: 0,
+        width: target.width,
+        height: target.height,
+      }),
+    },
     "./runtime-install.cjs": { ensurePackagedRuntime: ({ coreHome }) => {
       assert.equal(smokeEnv.CODEXWEB_COUNCIL_PRODUCT, "1");
       installedCore = coreHome;
@@ -52,7 +83,13 @@ async function executeSmoke(scratch, overrides = {}) {
       env: smokeEnv, stderr: { write() {} } },
   });
   assert.equal(await exited.promise, 0);
-  assert.equal(JSON.parse(fs.readFileSync(marker, "utf8")).runtimeVerified, true);
+  const markerState = JSON.parse(fs.readFileSync(marker, "utf8"));
+  assert.equal(markerState.runtimeVerified, true);
+  assert.equal(markerState.backgroundViewportVerified, true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(markerState.backgroundViewport.viewport)),
+    { width: 800, height: 600 },
+  );
   assert.equal(fs.existsSync(legacyProfile), false);
   assert.equal(fs.existsSync(legacyHome), false);
   return { portable, userData, installedCore, logs };
