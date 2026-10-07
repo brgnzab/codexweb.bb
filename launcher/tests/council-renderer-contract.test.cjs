@@ -5,20 +5,15 @@ const { join } = require("node:path");
 
 const root = join(__dirname, "..");
 const main = readFileSync(join(root, "src", "main.tsx"), "utf8");
-const dock = readFileSync(join(root, "src", "CouncilDock.tsx"), "utf8");
-const setup = readFileSync(join(root, "src", "CouncilSetupPanel.tsx"), "utf8");
-const agents = readFileSync(join(root, "src", "CouncilAgentsPanel.tsx"), "utf8");
+const app = readFileSync(join(root, "src", "CouncilApp.tsx"), "utf8");
 const types = readFileSync(join(root, "src", "types.ts"), "utf8");
 const preload = readFileSync(join(root, "electron", "preload.cjs"), "utf8");
-const css = readFileSync(join(root, "src", "council.css"), "utf8");
+const shellCss = readFileSync(join(root, "src", "council-shell.css"), "utf8");
 
 test("Mission Control mounts only the current Council App shell", () => {
   assert.match(main, /import \{ App \} from "\.\/App"/);
   assert.match(main, /<App\s*\/>/);
-  assert.doesNotMatch(main, /CouncilUpdatePrompt|council-update\.css/);
-  assert.doesNotMatch(main, /<CouncilDock\s*\/>/);
-  assert.doesNotMatch(main, /<CouncilAgentsPanel\s*\/>/);
-  assert.doesNotMatch(main, /<CouncilSetupPanel\s*\/>/);
+  assert.doesNotMatch(main, /CouncilUpdatePrompt|CouncilDock|CouncilAgentsPanel|CouncilSetupPanel|CouncilSupervisorPanel|council-update\.css/);
   assert.match(main, /import "\.\/styles\.css"/);
   assert.match(main, /import "\.\/council-4-shell-foundation\.css"/);
   assert.match(main, /import "\.\/council-4-workspaces\.css"/);
@@ -26,54 +21,31 @@ test("Mission Control mounts only the current Council App shell", () => {
   assert.match(main, /import "\.\/council-4-responsive\.css"/);
 });
 
-test("Council renderer consumes main-process shared projection instead of treating local runtime as Council truth", () => {
-  assert.doesNotMatch(dock, /http:\/\/127\.0\.0\.1:17842\/api\/state/);
-  assert.doesNotMatch(agents, /http:\/\/127\.0\.0\.1:17842\/api\/state/);
-  assert.doesNotMatch(dock, /const \[online,\s*setOnline\]/);
-  assert.match(dock, /onCouncilRuntime/);
-  assert.match(dock, /syncState/);
+test("current Council renderer consumes the main-process shared projection", () => {
+  assert.match(app, /onCouncilRuntime/);
+  assert.match(app, /projection\.syncState/);
   assert.match(preload, /onCouncilRuntime/);
   assert.match(types, /CouncilRuntimeViewState/);
   assert.match(types, /councilRuntime/);
   assert.match(types, /onCouncilRuntime/);
-  assert.doesNotMatch(dock, /https:\/\//);
-  assert.doesNotMatch(agents, /https:\/\//);
-  assert.match(setup, /api\.setupMcp/);
-  assert.match(setup, /CodexWeb Council/);
+  assert.doesNotMatch(app, /http:\/\/127\.0\.0\.1:17842\/api\/state/);
 });
 
-test("Council shared visibility distinguishes live, stale and sync-error state from execution capabilities", () => {
-  assert.match(dock, /syncState\s*===\s*["']live["']/);
-  assert.match(dock, /syncState\s*===\s*["']stale["']/);
-  assert.match(dock, /syncState\s*===\s*["']error["']/);
-  assert.match(dock, /managedProject/);
-  assert.match(dock, /capabilities/);
-  assert.match(dock, /lastSyncedAt/);
-  assert.doesNotMatch(dock, /!online\s*&&\s*<EmptyState title=["']Council runtime is offline/);
+test("current managed-agent tabs use controller-provided browser tabs without private conversation state", () => {
+  assert.match(app, /tabByAgent/);
+  assert.match(app, /selectBrowserTab\(tab\.id\)/);
+  assert.doesNotMatch(app, /conversationUrl/);
+  assert.doesNotMatch(app, /checkpoint\b/);
 });
 
-test("Council wake cards expose canonical transition evidence", () => {
-  assert.match(dock, /wake\.transitions/);
-  assert.match(dock, /council-wake-timeline/);
-  assert.match(css, /\.council-wake-timeline/);
+test("current ChatGPT workspace explicitly hides and restores the external browser surface", () => {
+  assert.match(app, /setBrowserSurfaceActive\(visible\)/);
+  assert.match(app, /hideBrowser\(\)/);
+  assert.match(app, /showBrowser\(\)/);
 });
 
-test("managed agents can select only the controller-provided agent tab", () => {
-  assert.match(agents, /tab\.agentId/);
-  assert.match(agents, /selectBrowserTab\(tab\.id\)/);
-  assert.doesNotMatch(agents, /conversationUrl/);
-  assert.doesNotMatch(agents, /checkpoint\b/);
-});
-
-test("Council overlay hides and restores the external ChatGPT browser surface", () => {
-  assert.match(dock, /setBrowserSurfaceActive\(false\)/);
-  assert.match(dock, /setBrowserSurfaceActive\(true\)/);
-  assert.match(dock, /restoreBrowser\.current/);
-});
-
-test("Council UI keeps the existing visual token system", () => {
-  assert.match(css, /var\(--color-background-surface\)/);
-  assert.match(css, /var\(--color-border\)/);
-  assert.match(css, /var\(--font-ui\)/);
-  assert.match(css, /var\(--radius-round\)/);
+test("current Mission Control shell uses the active visual token system", () => {
+  assert.match(shellCss, /var\(--c-bg\)/);
+  assert.match(shellCss, /var\(--c-line\)/);
+  assert.match(shellCss, /var\(--c-text\)/);
 });

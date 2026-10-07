@@ -5,7 +5,7 @@ const { join } = require("node:path");
 
 const root = join(__dirname, "..");
 const types = readFileSync(join(root, "src", "types.ts"), "utf8");
-const agents = readFileSync(join(root, "src", "CouncilAgentsPanel.tsx"), "utf8");
+const app = readFileSync(join(root, "src", "CouncilApp.tsx"), "utf8");
 
 test("managed project view carries sanitized GitHub workspace metadata", () => {
   assert.match(types, /workspace\?:\s*RepoWorkspaceBindingView/);
@@ -19,12 +19,7 @@ test("managed project view carries sanitized GitHub workspace metadata", () => {
   assert.doesNotMatch(types, /workspace[^}]*localPath/i);
 });
 
-test("managed agents panel shows repository identity and pinned base without credentials", () => {
-  assert.match(agents, /managed\?\.project\?\.workspace/);
-  assert.match(agents, /workspace\.owner/);
-  assert.match(agents, /workspace\.name/);
-  assert.match(agents, /workspace\.defaultBranch/);
-  assert.match(agents, /workspace\.baseCommit/);
-  assert.doesNotMatch(agents, /workspace\.token/);
-  assert.doesNotMatch(agents, /workspace\.path/);
+test("current Mission Control does not render workspace credentials or local paths", () => {
+  assert.doesNotMatch(app, /workspace\.token/);
+  assert.doesNotMatch(app, /workspace\.localPath/);
 });
