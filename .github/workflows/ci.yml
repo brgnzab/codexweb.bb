@@ -104,7 +104,7 @@ jobs:
             Remove-Item -LiteralPath $qaStdout,$qaStderr -Force -ErrorAction SilentlyContinue
           }
       - run: bun run app:package
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/uat-portable-2d7f875f'
       - name: Native packaged smoke
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/uat-portable-2d7f875f'
         run: bun run app:smoke
