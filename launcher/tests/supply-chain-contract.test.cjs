@@ -37,7 +37,8 @@ test("recorded Windows build toolchain matches committed launcher lock", () => {
   assert.match(lock, /typescript@5\.9\.3/);
   const rootLock = read(repoRoot, "bun.lock");
   assert.match(rootLock, /playwright-core@1\.62\.0/);
-  assert.match(rootLock, /@modelcontextprotocol\/sdk@1\.30\.0/);
+  assert.match(rootLock, /@modelcontextprotocol\/sdk@1\.31\.0/);
+  assert.match(rootLock, /proxy-addr@2\.0\.8/);
   const rootManifest = JSON.parse(read(repoRoot, "package.json"));
   assert.equal(rootManifest.packageManager, "bun@1.3.14");
   assert.equal(rootManifest.engines.bun, "1.3.14");

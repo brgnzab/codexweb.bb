@@ -82,7 +82,9 @@ test("CI and release build the Windows product only", () => {
   assert.match(release, /build:\s*[\s\S]*?runs-on: windows-latest/);
   assert.match(release, /name: release-windows-x64/);
   assert.match(release, /launcher\/artifacts\/\*-portable\.zip/);
-  assert.match(release, /bun run verify/);
+  assert.match(release, /run: \.\/scripts\/run-windows-ci-verify\.ps1/);
+  const verifyHelper = read(repositoryRoot, "scripts", "run-windows-ci-verify.ps1");
+  assert.match(verifyHelper, /& \$Bun run verify/);
   assert.match(release, /validate:portable/);
   assert.doesNotMatch(release, /macos-15|darwin-arm64|darwin-amd64|linux-amd64|AppImage|\.dmg/);
 });
