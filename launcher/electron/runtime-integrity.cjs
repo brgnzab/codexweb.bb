@@ -10,7 +10,10 @@ function inventory(root) {
   function visit(directory) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
       const file = path.join(directory, entry.name);
-      if (fs.lstatSync(file).isSymbolicLink()) {\n        const relative = path.relative(root, file).split(path.sep).join("/");\n        throw new Error(`Runtime resource reparse point rejected: ${relative}`);\n      }
+      if (fs.lstatSync(file).isSymbolicLink()) {
+        const relative = path.relative(root, file).split(path.sep).join("/");
+        throw new Error(`Runtime resource reparse point rejected: ${relative}`);
+      }
       if (entry.isDirectory()) visit(file);
       else if (entry.isFile()) {
         const relative = path.relative(root, file).split(path.sep).join("/");
