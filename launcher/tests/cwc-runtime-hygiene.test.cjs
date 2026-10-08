@@ -60,6 +60,11 @@ test("runtime bundle starts clean and package preparation scans every distributa
   const purgeIndex = bundle.indexOf("rmSync(output, { recursive: true, force: true });");
   const createIndex = bundle.indexOf("mkdirSync(appDir, { recursive: true });");
   assert.ok(purgeIndex >= 0 && createIndex > purgeIndex, "previous runtime output must be removed before rebuilding");
+  assert.match(
+    bundle,
+    /"install", "--production", "--frozen-lockfile", "--ignore-scripts", "--linker", "hoisted", "--backend", "copyfile"/,
+    "generated runtime dependencies must be materialized without isolated-linker symlinks",
+  );
 
   const prepare = read("launcher/scripts/prepare-runtime.cjs");
   for (const required of [
