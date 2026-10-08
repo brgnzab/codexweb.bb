@@ -31,7 +31,8 @@ jobs:
         run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.3.14 -GitHubEnv $env:GITHUB_ENV
       - name: Full source verification
         if: github.ref == 'refs/heads/main'
-        run: bun run verify
+        shell: pwsh
+        run: ./scripts/run-windows-ci-verify.ps1
       - name: CWC Personal accepted-source gate
         if: github.ref == 'refs/heads/cwc-personal'
         shell: pwsh
