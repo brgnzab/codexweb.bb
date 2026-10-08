@@ -1,4 +1,5 @@
 name: V5 Release Dispatch Once
+# Owner-approved one-shot dispatcher for the V5 cut.
 
 on:
   push:
