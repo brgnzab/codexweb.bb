@@ -65,6 +65,8 @@ test("runtime bundle starts clean and package preparation scans every distributa
     /"install", "--production", "--frozen-lockfile", "--ignore-scripts", "--linker", "hoisted", "--backend", "copyfile"/,
     "generated runtime dependencies must be materialized without isolated-linker symlinks",
   );
+  assert.match(bundle, /join\(appDir, "node_modules", "\.cache"\)/);
+  assert.match(bundle, /rmSync\(runtimeInstallCache, \{ recursive: true, force: true \}\)/);
 
   const prepare = read("launcher/scripts/prepare-runtime.cjs");
   for (const required of [

@@ -79,6 +79,15 @@ const install = Bun.spawnSync([process.execPath, "install", "--production", "--f
 if (install.exitCode !== 0) {
   throw new Error(`Runtime dependencies failed to install: ${install.stderr.toString() || install.stdout.toString()}`);
 }
+// Bun may retain install-cache links under node_modules/.cache even when the hoisted
+// production tree itself is fully materialized. Cache metadata is not a runtime input
+// and cannot be sealed into the portable because shipped runtime resources must be
+// regular files/directories only.
+const runtimeInstallCache = join(appDir, "node_modules", ".cache");
+if (!runtimeInstallCache.startsWith(`${appDir}${process.platform === "win32" ? "\\" : "/"}`)) {
+  throw new Error("Runtime install cache cleanup must stay inside the generated runtime app");
+}
+rmSync(runtimeInstallCache, { recursive: true, force: true });
 // Domino's published development fixtures contain names that exceed Windows'
 // extraction limit at ordinary portable locations. Its runtime entrypoint is lib.
 const dominoDevelopmentTests = join(appDir, "node_modules", "@mixmark-io", "domino", "test");
