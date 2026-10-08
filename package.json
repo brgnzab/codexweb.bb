@@ -44,7 +44,7 @@
     "verify": "bun run scripts/verify.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
     "chromium-bidi": "12.1.0",
     "fflate": "^0.8.2",
     "playwright-core": "^1.62.0",
@@ -68,7 +68,8 @@
     "hono": "4.13.7",
     "ip-address": "10.7.1",
     "qs": "6.16.0",
-    "zod-to-json-schema": "3.25.1"
+    "zod-to-json-schema": "3.25.1",
+    "proxy-addr": "2.0.8"
   },
   "keywords": [
     "chatgpt",
