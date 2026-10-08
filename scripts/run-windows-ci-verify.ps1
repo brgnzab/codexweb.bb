@@ -21,6 +21,8 @@ New-Item -ItemType Directory -Path $qaBin -Force | Out-Null
 
 $bun = Join-Path $qaBin "bun.exe"
 Copy-Item -LiteralPath (Get-Command bun).Source -Destination $bun -Force
+$bunx = Join-Path $qaBin "bunx.cmd"
+Set-Content -LiteralPath $bunx -Encoding ASCII -Value '@echo off`r`n"%~dp0bun.exe" x %*'
 $node = (Get-Command node).Source
 $embeddedBun = $env:CODEX_CHATGPT_WEB_EMBEDDED_BUN
 
