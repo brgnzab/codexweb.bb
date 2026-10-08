@@ -1,4 +1,10 @@
-# CodexWeb Council 4.1
+# CodexWeb Council V5
+
+## CWC Personal V5
+
+V5 is the cleaned, Windows-only portable release of CWC Personal. It preserves the accepted project-relay behavior while removing obsolete documentation, unmounted legacy renderer code, and unused assets. The pre-cleanup recovery source remains preserved on `known-good-d036834`.
+
+Known non-blocking issue: the **Keep running on close** checkbox can display stale state until restart after a change, even though the saved preference and actual close behavior are correct.
 
 ## CWC Personal project workflow
 
