@@ -1,11 +1,11 @@
 import { cpSync, readFileSync, renameSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { VERSION } from "../src/version";
 
 const sourceBundle = resolve(process.argv[2] ?? "dist/runtime");
 const sourceRoot = resolve(import.meta.dir, "..");
-const root = join(homedir(), `.codex-chatgpt-web-release-smoke-${process.pid}-${Date.now()}`);
+const root = join(tmpdir(), `.codex-chatgpt-web-release-smoke-${process.pid}-${Date.now()}`);
 const firstLocation = join(root, "first-location");
 const runtimeRoot = join(root, "relocated-runtime");
 cpSync(sourceBundle, firstLocation, { recursive: true });

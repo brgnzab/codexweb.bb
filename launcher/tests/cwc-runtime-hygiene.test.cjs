@@ -68,6 +68,11 @@ test("runtime bundle starts clean and package preparation scans every distributa
   assert.match(bundle, /join\(appDir, "node_modules", "\.cache"\)/);
   assert.match(bundle, /rmSync\(runtimeInstallCache, \{ recursive: true, force: true \}\)/);
 
+  const releaseSmoke = read("scripts/smoke-release.ts");
+  assert.match(releaseSmoke, /import \{ tmpdir \} from "node:os"/);
+  assert.match(releaseSmoke, /join\(tmpdir\(\), `\.codex-chatgpt-web-release-smoke-/);
+  assert.doesNotMatch(releaseSmoke, /homedir\(\)/);
+
   const prepare = read("launcher/scripts/prepare-runtime.cjs");
   for (const required of [
     'path.join(launcherRoot, "electron")',
