@@ -21,7 +21,6 @@ if (packageJson.engines?.bun !== bunVersion) throw new Error(`engines.bun is not
 const expected = [
   ["src/version.ts", `export const VERSION = ${JSON.stringify(packageVersion)};`],
   ["README.md", `- Bun \`${bunVersion}\``],
-  ["README.zh-CN.md", `Bun ${bunVersion}`],
   ["scripts/generate-third-party-notices.ts", `Bun ${bunVersion}`],
   ["scripts/prepare-windows-baseline-bun.ps1", `bun-v$Version`],
   [".github/workflows/ci.yml", `bun-version: ${bunVersion}`],
