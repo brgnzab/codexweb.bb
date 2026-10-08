@@ -18,11 +18,12 @@ test("Council Electron entrypoint declares standalone product mode", () => {
   expect(entry).toContain("CODEXWEB_COUNCIL_PRODUCT");
 });
 
-test("Plus fallback is wired through preload and Agents UI", () => {
+test("Plus fallback is wired through preload and the current ChatGPT workspace", () => {
   const preload = source("launcher/electron/preload.cjs");
-  const agents = source("launcher/src/CouncilAgentsPanel.tsx");
+  const app = source("launcher/src/CouncilApp.tsx");
   expect(preload).toContain("bindCurrentChatGptAsLead");
-  expect(agents).toContain("Bind current ChatGPT as Lead");
+  expect(app).toContain("bindCurrentChatGptAsLead");
+  expect(app).toContain("Bind current ChatGPT as Lead");
 });
 
 test("Council launcher UI no longer requires Codex catalog installation", () => {
